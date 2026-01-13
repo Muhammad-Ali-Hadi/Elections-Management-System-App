@@ -16,7 +16,7 @@ const app = express();
 
 // CORS configuration for faster preflight caching
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://localhost:3000', 'http://127.0.0.1:5173'],
+  // origin: ['http://localhost:5173', 'http://localhost:3000', 'http://127.0.0.1:5173'],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
@@ -36,7 +36,13 @@ const mongoOptions = {
   bufferCommands: false // Disable mongoose buffering for better error handling
 };
 
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/elections_db', mongoOptions)
+if(!process.env.MONGODB_URI)
+{
+  console.error('Mongo URI Missing!');
+  process.exit(1);
+}
+
+mongoose.connect(process.env.MONGODB_URI, mongoOptions)
 .then(() => {
   console.log('✅ MongoDB connected successfully');
   console.log('📊 Database:', mongoose.connection.name);
@@ -82,6 +88,6 @@ app.use((req, res) => {
 
 const PORT = process.env.PORT || 5001;
 // Port updated to 5001
-app.listen(PORT, 'localhost', () => {
+app.listen(PORT, () => {
   console.log(`Election API server running on http://localhost:${PORT}`);
 });
