@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { resultsAPI } from '../services/api';
 
 function Results({ onNavigate, isPublic = false }) {
@@ -7,34 +7,62 @@ function Results({ onNavigate, isPublic = false }) {
 
   const [electionInfo, setElectionInfo] = useState(null);
   const [finalizedResults, setFinalizedResults] = useState(null);
-  const [phase, setPhase] = useState('loading'); // loading, not_started, ongoing, ended, declared
+  const [phase, setPhase] = useState('loading'); // loading, no_election, not_started, ongoing, ended, declared
   const [error, setError] = useState(null);
+  const [countdown, setCountdown] = useState({ days: 0, hours: 0, minutes: 0, seconds: 0 });
+
+  // Calculate countdown to target date
+  const calculateCountdown = useCallback((targetDate) => {
+    if (!targetDate) return { days: 0, hours: 0, minutes: 0, seconds: 0, total: 0 };
+    const now = new Date().getTime();
+    const target = new Date(targetDate).getTime();
+    const diff = target - now;
+    
+    if (diff <= 0) return { days: 0, hours: 0, minutes: 0, seconds: 0, total: 0 };
+    
+    return {
+      days: Math.floor(diff / (1000 * 60 * 60 * 24)),
+      hours: Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)),
+      minutes: Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60)),
+      seconds: Math.floor((diff % (1000 * 60)) / 1000),
+      total: diff
+    };
+  }, []);
 
   useEffect(() => {
     const fetchData = async () => {
       try {
         setError(null);
         
-        // First get election schedule status
         const statusData = await resultsAPI.getElectionScheduleStatus(ELECTION_ID);
         if (statusData?.election) {
-          setElectionInfo(statusData.election);
-          const electionPhase = statusData.election.phase;
+          const info = statusData.election;
+          setElectionInfo(info);
           
-          // If declared, fetch full results
+          // Check for no election scheduled
+          if (!info.startDate && !info.endDate && !info.isOpen) {
+            setPhase('no_election');
+            return;
+          }
+          
+          const electionPhase = info.phase;
+          
           if (electionPhase === 'declared') {
             try {
               const resultsData = await resultsAPI.getFinalizedResults(ELECTION_ID);
-              const payload = resultsData.results || resultsData;
-              setFinalizedResults(payload);
+              console.log('Finalized results:', resultsData);
+              setFinalizedResults(resultsData);
               setPhase('declared');
-            } catch {
-              setPhase('ended'); // Results not ready yet
+            } catch (err) {
+              console.log('Results fetch error, showing ended:', err);
+              setPhase('ended');
             }
           } else {
             setPhase(electionPhase);
             setFinalizedResults(null);
           }
+        } else {
+          setPhase('no_election');
         }
       } catch (err) {
         console.error('Error fetching election data:', err);
@@ -47,6 +75,21 @@ function Results({ onNavigate, isPublic = false }) {
     const poll = setInterval(fetchData, 8000);
     return () => clearInterval(poll);
   }, [ELECTION_ID]);
+
+  // Countdown timer effect
+  useEffect(() => {
+    if (phase === 'not_started' && electionInfo?.startDate) {
+      const timer = setInterval(() => {
+        setCountdown(calculateCountdown(electionInfo.startDate));
+      }, 1000);
+      return () => clearInterval(timer);
+    } else if (phase === 'ongoing' && electionInfo?.endDate) {
+      const timer = setInterval(() => {
+        setCountdown(calculateCountdown(electionInfo.endDate));
+      }, 1000);
+      return () => clearInterval(timer);
+    }
+  }, [phase, electionInfo, calculateCountdown]);
 
   const formatDate = (dateStr) => {
     if (!dateStr) return 'Not scheduled';
@@ -61,10 +104,37 @@ function Results({ onNavigate, isPublic = false }) {
     });
   };
 
+  const renderCountdownBox = (value, label) => (
+    <div className="countdown-box">
+      <div className="countdown-value">{String(value).padStart(2, '0')}</div>
+      <div className="countdown-label">{label}</div>
+    </div>
+  );
+
+  const renderNoElection = () => (
+    <div className="results-ongoing-card luxury no-election">
+      <div className="no-election-icon">📋</div>
+      <h2>No Active Election</h2>
+      <p>There is currently no election scheduled or the election has been reset.</p>
+      <p style={{ marginTop: '16px', color: '#94a3b8' }}>Please check back later for upcoming elections from the Allah Noor Elections Committee.</p>
+    </div>
+  );
+
   const renderNotStarted = () => (
     <div className="results-ongoing-card luxury">
-      <div className="ongoing-badge">🗓️ Voting Not Started</div>
-      <h2>Elections will begin soon</h2>
+      <div className="ongoing-badge">🗓️ Election Scheduled</div>
+      <h2>Voting begins in</h2>
+      
+      <div className="countdown-container">
+        {renderCountdownBox(countdown.days, 'Days')}
+        <span className="countdown-separator">:</span>
+        {renderCountdownBox(countdown.hours, 'Hours')}
+        <span className="countdown-separator">:</span>
+        {renderCountdownBox(countdown.minutes, 'Minutes')}
+        <span className="countdown-separator">:</span>
+        {renderCountdownBox(countdown.seconds, 'Seconds')}
+      </div>
+
       <div className="schedule-info">
         <div className="schedule-row">
           <span className="schedule-label">📅 Start Time:</span>
@@ -75,14 +145,25 @@ function Results({ onNavigate, isPublic = false }) {
           <span className="schedule-value">{formatDate(electionInfo?.endDate)}</span>
         </div>
       </div>
-      <p style={{ marginTop: '20px' }}>Please check back when voting opens. The Allah Noor Elections Committee will conduct the election as scheduled.</p>
+      <p style={{ marginTop: '20px' }}>The Allah Noor Elections Committee will conduct the election as scheduled.</p>
     </div>
   );
 
   const renderOngoing = () => (
-    <div className="results-ongoing-card luxury">
+    <div className="results-ongoing-card luxury ongoing-active">
       <div className="ongoing-badge ongoing-pulse">🗳️ Voting In Progress</div>
-      <h2>Elections are currently ongoing</h2>
+      <h2>Time remaining to vote</h2>
+      
+      <div className="countdown-container">
+        {renderCountdownBox(countdown.days, 'Days')}
+        <span className="countdown-separator">:</span>
+        {renderCountdownBox(countdown.hours, 'Hours')}
+        <span className="countdown-separator">:</span>
+        {renderCountdownBox(countdown.minutes, 'Minutes')}
+        <span className="countdown-separator">:</span>
+        {renderCountdownBox(countdown.seconds, 'Seconds')}
+      </div>
+
       <div className="schedule-info">
         <div className="schedule-row">
           <span className="schedule-label">📅 Started:</span>
@@ -93,27 +174,48 @@ function Results({ onNavigate, isPublic = false }) {
           <span className="schedule-value">{formatDate(electionInfo?.endDate)}</span>
         </div>
       </div>
-      <p style={{ marginTop: '20px' }}>Results will be published after voting concludes and the Election Committee verifies all votes.</p>
+      <p style={{ marginTop: '20px' }}>Cast your vote now! Results will be published after voting concludes.</p>
     </div>
   );
 
   const renderEnded = () => (
-    <div className="results-ongoing-card luxury">
+    <div className="results-ongoing-card luxury ended-waiting">
+      <div className="waiting-animation">
+        <div className="waiting-spinner"></div>
+      </div>
       <div className="ongoing-badge ended-badge">⏳ Voting Ended</div>
-      <h2>Waiting for results to be declared</h2>
-      <p>The voting period has concluded. The Allah Noor Elections Committee is currently verifying and compiling the results.</p>
-      <p style={{ marginTop: '16px', color: '#94a3b8' }}>Please check back shortly for the official announcement.</p>
+      <h2>Awaiting Results Declaration</h2>
+      <div className="waiting-message">
+        <p>The voting period has concluded.</p>
+        <p>The Allah Noor Elections Committee is currently:</p>
+        <ul className="waiting-steps">
+          <li>✓ Collecting all votes</li>
+          <li>✓ Verifying voter attendance</li>
+          <li className="active">⏳ Compiling final results</li>
+          <li className="pending">📊 Preparing official announcement</li>
+        </ul>
+      </div>
+      <p className="waiting-note">Please check back shortly. Results will appear automatically once declared.</p>
     </div>
   );
 
   const renderDeclared = () => {
     if (!finalizedResults) return null;
 
-    const statistics = finalizedResults.statistics || {};
-    const winners = finalizedResults.winners || [];
-    const losers = finalizedResults.losers || [];
-    const positions = new Set([...winners, ...losers].map(c => c.position));
-    const remainingApartments = Math.max(TOTAL_FLATS - (statistics.totalVotesCast || 0), 0);
+    // Handle both nested and flat response structures
+    const stats = finalizedResults.statistics || finalizedResults.votingStatistics || {};
+    const winnersList = finalizedResults.winners || [];
+    const losersList = finalizedResults.losers || [];
+    const allCandidates = finalizedResults.allCandidates || [...winnersList, ...losersList];
+    const declaredAt = finalizedResults.declaredAt;
+
+    const positions = new Set(allCandidates.map(c => c.position));
+    const totalVotes = stats.totalVotesCast || stats.totalVotes || 0;
+    const votingPercentage = stats.votingPercentage || Math.round((totalVotes / TOTAL_FLATS) * 100);
+    const remainingApartments = Math.max(TOTAL_FLATS - totalVotes, 0);
+    const nonVotingFlats = stats.nonVotingFlats || [];
+
+    console.log('Rendering declared with:', { stats, winnersList, losersList, totalVotes });
 
     return (
       <div className="luxury-results">
@@ -121,7 +223,7 @@ function Results({ onNavigate, isPublic = false }) {
           <div className="header-left">
             <p className="eyebrow">Allah Noor Elections Committee</p>
             <h1>Official Election Results</h1>
-            <p className="sub">Declared on {formatDate(finalizedResults.declaredAt)}</p>
+            <p className="sub">Declared on {formatDate(declaredAt)}</p>
           </div>
           <div className="header-right">
             <span className="pill success">✓ Results Declared</span>
@@ -129,20 +231,20 @@ function Results({ onNavigate, isPublic = false }) {
         </header>
 
         <section className="luxury-stats">
-          <div className="stat-card">
+          <div className="stat-card highlight">
             <div className="label">Total Votes Cast</div>
-            <div className="value">{statistics.totalVotesCast ?? 0}</div>
+            <div className="value">{totalVotes}</div>
           </div>
           <div className="stat-card">
             <div className="label">Total Flats</div>
-            <div className="value">{statistics.totalFlats ?? TOTAL_FLATS}</div>
+            <div className="value">{stats.totalFlats ?? TOTAL_FLATS}</div>
           </div>
-          <div className="stat-card">
+          <div className="stat-card highlight">
             <div className="label">Voting %</div>
-            <div className="value">{statistics.votingPercentage ?? 0}%</div>
+            <div className="value">{votingPercentage}%</div>
           </div>
           <div className="stat-card">
-            <div className="label">Remaining</div>
+            <div className="label">Did Not Vote</div>
             <div className="value">{remainingApartments}</div>
           </div>
           <div className="stat-card">
@@ -169,22 +271,26 @@ function Results({ onNavigate, isPublic = false }) {
           </div>
         </section>
 
-        {winners.length > 0 && (
-          <section className="winners-grid luxury">
-            {winners.map((winner, idx) => (
-              <div key={`${winner.position}-${idx}`} className="winner-card-luxe">
-                <div className="position">{winner.position}</div>
-                <div className="name">{winner.candidateName}</div>
-                <div className="metrics">
-                  <span>🗳️ {winner.totalVotes} votes</span>
-                  <span>📊 {winner.votePercentage}%</span>
+        {winnersList.length > 0 && (
+          <section className="winners-section">
+            <h3 className="section-title">🏆 Elected Winners</h3>
+            <div className="winners-grid luxury">
+              {winnersList.map((winner, idx) => (
+                <div key={`${winner.position}-${idx}`} className="winner-card-luxe">
+                  <div className="winner-crown">👑</div>
+                  <div className="position">{winner.position}</div>
+                  <div className="name">{winner.candidateName}</div>
+                  <div className="metrics">
+                    <span className="votes">🗳️ {winner.totalVotes} votes</span>
+                    <span className="percentage">📊 {winner.votePercentage}%</span>
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </section>
         )}
 
-        {(winners.length > 0 || losers.length > 0) && (
+        {allCandidates.length > 0 && (
           <section className="luxury-table">
             <h3>📋 Full Candidate Tally</h3>
             <div className="table">
@@ -193,24 +299,29 @@ function Results({ onNavigate, isPublic = false }) {
                 <div>Candidate</div>
                 <div>Votes</div>
                 <div>Vote %</div>
+                <div>Status</div>
               </div>
-              {[...winners, ...losers].map((entry, index) => (
-                <div key={`${entry.position}-${index}`} className="row">
-                  <div>{entry.position}</div>
-                  <div className="strong">{entry.candidateName}</div>
-                  <div>{entry.totalVotes}</div>
-                  <div>{entry.votePercentage}%</div>
-                </div>
-              ))}
+              {allCandidates.map((entry, index) => {
+                const isWinner = winnersList.some(w => w.candidateName === entry.candidateName && w.position === entry.position);
+                return (
+                  <div key={`${entry.position}-${index}`} className={`row ${isWinner ? 'winner-row' : ''}`}>
+                    <div>{entry.position}</div>
+                    <div className="strong">{entry.candidateName}</div>
+                    <div>{entry.totalVotes}</div>
+                    <div>{entry.votePercentage}%</div>
+                    <div>{isWinner ? '🏆 Winner' : '—'}</div>
+                  </div>
+                );
+              })}
             </div>
           </section>
         )}
 
-        {statistics.nonVotingFlats?.length > 0 && (
+        {nonVotingFlats.length > 0 && (
           <section className="nonvoting">
-            <h3>Non-Voting Flats ({statistics.nonVotingFlats.length})</h3>
+            <h3>Non-Voting Flats ({nonVotingFlats.length})</h3>
             <div className="pill-list">
-              {statistics.nonVotingFlats.map(flat => (
+              {nonVotingFlats.map(flat => (
                 <span key={flat} className="pill muted">{flat}</span>
               ))}
             </div>
@@ -228,11 +339,12 @@ function Results({ onNavigate, isPublic = false }) {
     <div className="results-container official-mode luxury-shell">
       {phase === 'loading' && (
         <div className="loading">
-          <div style={{ fontSize: '2rem', marginBottom: '16px' }}>⏳</div>
-          Loading election information...
+          <div className="loading-spinner"></div>
+          <p>Loading election information...</p>
         </div>
       )}
 
+      {phase === 'no_election' && renderNoElection()}
       {phase === 'not_started' && renderNotStarted()}
       {phase === 'ongoing' && renderOngoing()}
       {phase === 'ended' && renderEnded()}

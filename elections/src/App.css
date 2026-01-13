@@ -541,6 +541,185 @@ body {
   font-size: 0.95rem;
 }
 
+/* Countdown Timer Styles */
+.countdown-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  margin: 24px 0;
+  flex-wrap: wrap;
+}
+
+.countdown-box {
+  background: linear-gradient(145deg, rgba(255,255,255,0.1), rgba(255,255,255,0.05));
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 12px;
+  padding: 16px 20px;
+  min-width: 70px;
+  text-align: center;
+}
+
+.countdown-value {
+  font-size: clamp(1.75rem, 5vw, 2.5rem);
+  font-weight: 800;
+  color: #14b8a6;
+  line-height: 1;
+  font-family: 'Segoe UI', monospace;
+}
+
+.countdown-label {
+  font-size: 0.75rem;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-top: 6px;
+}
+
+.countdown-separator {
+  font-size: 2rem;
+  font-weight: 700;
+  color: #64748b;
+  margin: 0 2px;
+}
+
+/* No Election State */
+.results-ongoing-card.no-election {
+  border-color: rgba(100, 116, 139, 0.3);
+}
+
+.no-election-icon {
+  font-size: 4rem;
+  margin-bottom: 20px;
+  opacity: 0.7;
+}
+
+/* Ongoing Active State */
+.results-ongoing-card.ongoing-active {
+  border-color: rgba(20, 184, 166, 0.4);
+  box-shadow: 0 0 40px rgba(20, 184, 166, 0.15);
+}
+
+.results-ongoing-card.ongoing-active .countdown-value {
+  color: #22d3ee;
+}
+
+/* Ended Waiting State */
+.results-ongoing-card.ended-waiting {
+  border-color: rgba(245, 158, 11, 0.4);
+}
+
+.waiting-animation {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 24px;
+}
+
+.waiting-spinner {
+  width: 60px;
+  height: 60px;
+  border: 4px solid rgba(245, 158, 11, 0.2);
+  border-top-color: #f59e0b;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.waiting-message {
+  text-align: left;
+  max-width: 400px;
+  margin: 20px auto;
+}
+
+.waiting-message p {
+  margin-bottom: 12px;
+}
+
+.waiting-steps {
+  list-style: none;
+  padding: 0;
+  margin: 16px 0;
+}
+
+.waiting-steps li {
+  padding: 10px 16px;
+  margin: 6px 0;
+  background: rgba(255,255,255,0.03);
+  border-radius: 8px;
+  color: #94a3b8;
+  font-size: 0.95rem;
+}
+
+.waiting-steps li.active {
+  background: rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
+  border-left: 3px solid #f59e0b;
+}
+
+.waiting-steps li.pending {
+  opacity: 0.5;
+}
+
+.waiting-note {
+  font-size: 0.9rem;
+  color: #64748b;
+  margin-top: 20px;
+  font-style: italic;
+}
+
+/* Loading Spinner */
+.loading-spinner {
+  width: 48px;
+  height: 48px;
+  border: 4px solid rgba(20, 184, 166, 0.2);
+  border-top-color: #14b8a6;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin: 0 auto 16px;
+}
+
+/* Winners Section Enhancement */
+.winners-section {
+  margin: 32px 0;
+}
+
+.section-title {
+  color: #e2e8f0;
+  font-size: 1.25rem;
+  margin-bottom: 20px;
+  text-align: center;
+}
+
+.winner-card-luxe .winner-crown {
+  font-size: 1.5rem;
+  margin-bottom: 8px;
+}
+
+.winner-card-luxe .metrics .votes,
+.winner-card-luxe .metrics .percentage {
+  display: inline-block;
+  margin: 0 8px;
+}
+
+/* Stat card highlight */
+.stat-card.highlight {
+  background: linear-gradient(145deg, rgba(20, 184, 166, 0.15), rgba(14, 165, 233, 0.1));
+  border-color: rgba(20, 184, 166, 0.3);
+}
+
+.stat-card.highlight .value {
+  color: #14b8a6;
+}
+
+/* Winner row in table */
+.luxury-table .row.winner-row {
+  background: rgba(20, 184, 166, 0.1);
+  border-left: 3px solid #14b8a6;
+}
+
 .results-ongoing-card h2 {
   color: #e2e8f0;
   font-size: clamp(1.25rem, 4vw, 1.75rem);
@@ -645,6 +824,29 @@ body {
   .luxury-table .row.head {
     font-size: 0.7rem;
   }
+  
+  /* Countdown responsive */
+  .countdown-container {
+    gap: 4px;
+  }
+  
+  .countdown-box {
+    padding: 12px 14px;
+    min-width: 55px;
+  }
+  
+  .countdown-value {
+    font-size: 1.5rem;
+  }
+  
+  .countdown-separator {
+    font-size: 1.25rem;
+  }
+  
+  .waiting-steps li {
+    padding: 8px 12px;
+    font-size: 0.85rem;
+  }
 }
 
 @media (max-width: 480px) {
@@ -709,6 +911,38 @@ body {
   .results-ongoing-card {
     margin: 40px 16px;
     padding: 32px 20px;
+  }
+  
+  /* Countdown even smaller */
+  .countdown-container {
+    gap: 3px;
+  }
+  
+  .countdown-box {
+    padding: 10px 10px;
+    min-width: 48px;
+  }
+  
+  .countdown-value {
+    font-size: 1.25rem;
+  }
+  
+  .countdown-label {
+    font-size: 0.65rem;
+  }
+  
+  .countdown-separator {
+    font-size: 1rem;
+    margin: 0;
+  }
+  
+  .no-election-icon {
+    font-size: 3rem;
+  }
+  
+  .waiting-spinner {
+    width: 48px;
+    height: 48px;
   }
   
   .nonvoting {
