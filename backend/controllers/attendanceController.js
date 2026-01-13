@@ -79,7 +79,7 @@ exports.getAttendanceReport = async (req, res) => {
     // Use Promise.all for parallel queries
     const [attendance, totalRegistered] = await Promise.all([
       Attendance.find({ electionId })
-        .select('voterId flatNumber name loginTime voteTime voted')
+        .select('voterId flatNumber name loginTime voteTime voted rejected rejectedAt')
         .sort({ flatNumber: 1 })
         .lean(),
       Voter.countDocuments()
@@ -123,7 +123,7 @@ exports.getAttendanceByFlat = async (req, res) => {
     }
 
     const attendance = await Attendance.findOne({ flatNumber, electionId })
-      .select('flatNumber name loginTime voteTime voted')
+      .select('flatNumber name loginTime voteTime voted rejected rejectedAt')
       .lean();
 
     if (!attendance) {

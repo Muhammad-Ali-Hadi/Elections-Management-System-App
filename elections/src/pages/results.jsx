@@ -1,247 +1,268 @@
-import { useState, useEffect } from 'react'
-import { resultsAPI } from '../services/api'
+import { useState, useEffect } from 'react';
+import { resultsAPI } from '../services/api';
 
-function Results({ onNavigate }) {
-  const ELECTION_ID = '6957030455dee196ac3b31c4'
-  
-  const [finalizedResults, setFinalizedResults] = useState(null)
-  const [currentResults, setCurrentResults] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
-  const [resultsPage, setResultsPage] = useState(() => {
-    // Load from localStorage on initial mount
-    const saved = localStorage.getItem('resultsPage')
-    return saved || 'ongoing'
-  })
+function Results({ onNavigate, isPublic = false }) {
+  const ELECTION_ID = import.meta.env.VITE_ELECTION_ID || '6957030455dee196ac3b31c4';
+  const TOTAL_FLATS = 105;
 
-  // Save resultsPage to localStorage whenever it changes
-  useEffect(() => {
-    localStorage.setItem('resultsPage', resultsPage)
-  }, [resultsPage])
+  const [electionInfo, setElectionInfo] = useState(null);
+  const [finalizedResults, setFinalizedResults] = useState(null);
+  const [phase, setPhase] = useState('loading'); // loading, not_started, ongoing, ended, declared
+  const [error, setError] = useState(null);
 
   useEffect(() => {
-    const fetchResults = async () => {
+    const fetchData = async () => {
       try {
-        setLoading(true)
-        if (resultsPage === 'finalized') {
-          const data = await resultsAPI.getFinalizedResults(ELECTION_ID)
-          setFinalizedResults(data)
-        } else {
-          const data = await resultsAPI.getCurrentResults(ELECTION_ID)
-          setCurrentResults(data)
+        setError(null);
+        
+        // First get election schedule status
+        const statusData = await resultsAPI.getElectionScheduleStatus(ELECTION_ID);
+        if (statusData?.election) {
+          setElectionInfo(statusData.election);
+          const electionPhase = statusData.election.phase;
+          
+          // If declared, fetch full results
+          if (electionPhase === 'declared') {
+            try {
+              const resultsData = await resultsAPI.getFinalizedResults(ELECTION_ID);
+              const payload = resultsData.results || resultsData;
+              setFinalizedResults(payload);
+              setPhase('declared');
+            } catch {
+              setPhase('ended'); // Results not ready yet
+            }
+          } else {
+            setPhase(electionPhase);
+            setFinalizedResults(null);
+          }
         }
-        setError(null)
       } catch (err) {
-        console.error('Error fetching results:', err)
-        setError(err.message)
-      } finally {
-        setLoading(false)
+        console.error('Error fetching election data:', err);
+        setError(err.message || 'Failed to load election information');
+        setPhase('error');
       }
-    }
+    };
 
-    fetchResults()
-    const pollInterval = setInterval(fetchResults, 5000) // Poll every 5 seconds
-    return () => clearInterval(pollInterval)
-  }, [resultsPage])
+    fetchData();
+    const poll = setInterval(fetchData, 8000);
+    return () => clearInterval(poll);
+  }, [ELECTION_ID]);
 
-  const renderOngoingResults = () => {
-    if (!currentResults?.candidateResults) return null
+  const formatDate = (dateStr) => {
+    if (!dateStr) return 'Not scheduled';
+    const date = new Date(dateStr);
+    return date.toLocaleString('en-US', {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
 
-    const positions = [...new Set(currentResults.candidateResults.map(c => c.position))]
-    const stats = currentResults.votingStatistics || {}
+  const renderNotStarted = () => (
+    <div className="results-ongoing-card luxury">
+      <div className="ongoing-badge">🗓️ Voting Not Started</div>
+      <h2>Elections will begin soon</h2>
+      <div className="schedule-info">
+        <div className="schedule-row">
+          <span className="schedule-label">📅 Start Time:</span>
+          <span className="schedule-value">{formatDate(electionInfo?.startDate)}</span>
+        </div>
+        <div className="schedule-row">
+          <span className="schedule-label">⏰ End Time:</span>
+          <span className="schedule-value">{formatDate(electionInfo?.endDate)}</span>
+        </div>
+      </div>
+      <p style={{ marginTop: '20px' }}>Please check back when voting opens. The Allah Noor Elections Committee will conduct the election as scheduled.</p>
+    </div>
+  );
+
+  const renderOngoing = () => (
+    <div className="results-ongoing-card luxury">
+      <div className="ongoing-badge ongoing-pulse">🗳️ Voting In Progress</div>
+      <h2>Elections are currently ongoing</h2>
+      <div className="schedule-info">
+        <div className="schedule-row">
+          <span className="schedule-label">📅 Started:</span>
+          <span className="schedule-value">{formatDate(electionInfo?.startDate)}</span>
+        </div>
+        <div className="schedule-row">
+          <span className="schedule-label">⏰ Ends:</span>
+          <span className="schedule-value">{formatDate(electionInfo?.endDate)}</span>
+        </div>
+      </div>
+      <p style={{ marginTop: '20px' }}>Results will be published after voting concludes and the Election Committee verifies all votes.</p>
+    </div>
+  );
+
+  const renderEnded = () => (
+    <div className="results-ongoing-card luxury">
+      <div className="ongoing-badge ended-badge">⏳ Voting Ended</div>
+      <h2>Waiting for results to be declared</h2>
+      <p>The voting period has concluded. The Allah Noor Elections Committee is currently verifying and compiling the results.</p>
+      <p style={{ marginTop: '16px', color: '#94a3b8' }}>Please check back shortly for the official announcement.</p>
+    </div>
+  );
+
+  const renderDeclared = () => {
+    if (!finalizedResults) return null;
+
+    const statistics = finalizedResults.statistics || {};
+    const winners = finalizedResults.winners || [];
+    const losers = finalizedResults.losers || [];
+    const positions = new Set([...winners, ...losers].map(c => c.position));
+    const remainingApartments = Math.max(TOTAL_FLATS - (statistics.totalVotesCast || 0), 0);
 
     return (
-      <div className="results-card">
-        <h2>Live Election Results</h2>
-        
-        <div className="results-statistics">
-          <div className="stat-box">
-            <div className="stat-label">Total Votes Cast</div>
-            <div className="stat-value">{stats.totalVotesCast || 0}</div>
+      <div className="luxury-results">
+        <header className="luxury-header">
+          <div className="header-left">
+            <p className="eyebrow">Allah Noor Elections Committee</p>
+            <h1>Official Election Results</h1>
+            <p className="sub">Declared on {formatDate(finalizedResults.declaredAt)}</p>
           </div>
-          <div className="stat-box">
-            <div className="stat-label">Total Flats</div>
-            <div className="stat-value">{stats.totalFlats || 0}</div>
+          <div className="header-right">
+            <span className="pill success">✓ Results Declared</span>
           </div>
-          <div className="stat-box">
-            <div className="stat-label">Voting Percentage</div>
-            <div className="stat-value">{stats.votingPercentage || 0}%</div>
-          </div>
-          <div className="stat-box">
-            <div className="stat-label">Non-Voting Flats</div>
-            <div className="stat-value">{stats.nonVotingFlats?.length || 0}</div>
-          </div>
-        </div>
+        </header>
 
-        {positions.map(position => (
-          <div key={position} className="results-position">
-            <h3>{position}</h3>
-            <div className="results-list">
-              {currentResults.candidateResults
-                .filter(c => c.position === position)
-                .sort((a, b) => b.totalVotes - a.totalVotes)
-                .map((candidate, index) => (
-                  <div key={candidate._id || candidate.candidateId} className="result-item">
-                    <div className="result-rank">
-                      {index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : index + 1}
-                    </div>
-                    <div className="result-info">
-                      <div className="result-name">{candidate.candidateName || candidate.name}</div>
-                      <div className="result-stats">
-                        {candidate.totalVotes} votes ({candidate.votePercentage || 0}%)
-                      </div>
-                      <div className="voted-by">Voted by: {candidate.votedByFlats?.join(', ') || 'N/A'}</div>
-                    </div>
-                    <div className="result-bar">
-                      <div
-                        className="result-bar-fill"
-                        style={{ width: `${candidate.votePercentage || 0}%` }}
-                      ></div>
-                    </div>
-                  </div>
-                ))}
+        <section className="luxury-stats">
+          <div className="stat-card">
+            <div className="label">Total Votes Cast</div>
+            <div className="value">{statistics.totalVotesCast ?? 0}</div>
+          </div>
+          <div className="stat-card">
+            <div className="label">Total Flats</div>
+            <div className="value">{statistics.totalFlats ?? TOTAL_FLATS}</div>
+          </div>
+          <div className="stat-card">
+            <div className="label">Voting %</div>
+            <div className="value">{statistics.votingPercentage ?? 0}%</div>
+          </div>
+          <div className="stat-card">
+            <div className="label">Remaining</div>
+            <div className="value">{remainingApartments}</div>
+          </div>
+          <div className="stat-card">
+            <div className="label">Positions</div>
+            <div className="value">{positions.size}</div>
+          </div>
+        </section>
+
+        <section className="committee-panel">
+          <h3>Election Committee</h3>
+          <div className="committee-grid">
+            <div className="committee-card">
+              <div className="role">President</div>
+              <div className="name">Daniyal Khan</div>
+            </div>
+            <div className="committee-card">
+              <div className="role">Committee Member-1</div>
+              <div className="name">Shahrukh</div>
+            </div>
+            <div className="committee-card">
+              <div className="role">Committee Member-2</div>
+              <div className="name">Najam us Sehar</div>
             </div>
           </div>
-        ))}
+        </section>
 
-        {stats.nonVotingFlats?.length > 0 && (
-          <div className="non-voting-section">
-            <h3>Non-Voting Flats ({stats.nonVotingFlats.length})</h3>
-            <div className="non-voting-list">
-              {stats.nonVotingFlats.map(flat => (
-                <span key={flat} className="non-voting-flat">{flat}</span>
+        {winners.length > 0 && (
+          <section className="winners-grid luxury">
+            {winners.map((winner, idx) => (
+              <div key={`${winner.position}-${idx}`} className="winner-card-luxe">
+                <div className="position">{winner.position}</div>
+                <div className="name">{winner.candidateName}</div>
+                <div className="metrics">
+                  <span>🗳️ {winner.totalVotes} votes</span>
+                  <span>📊 {winner.votePercentage}%</span>
+                </div>
+              </div>
+            ))}
+          </section>
+        )}
+
+        {(winners.length > 0 || losers.length > 0) && (
+          <section className="luxury-table">
+            <h3>📋 Full Candidate Tally</h3>
+            <div className="table">
+              <div className="row head">
+                <div>Position</div>
+                <div>Candidate</div>
+                <div>Votes</div>
+                <div>Vote %</div>
+              </div>
+              {[...winners, ...losers].map((entry, index) => (
+                <div key={`${entry.position}-${index}`} className="row">
+                  <div>{entry.position}</div>
+                  <div className="strong">{entry.candidateName}</div>
+                  <div>{entry.totalVotes}</div>
+                  <div>{entry.votePercentage}%</div>
+                </div>
               ))}
             </div>
-          </div>
+          </section>
         )}
-      </div>
-    )
-  }
-
-  const renderFinalizedResults = () => {
-    if (!finalizedResults) return null
-
-    const { statistics, winners, losers } = finalizedResults
-
-    return (
-      <div className="results-card">
-        <h2>Final Election Results</h2>
-        
-        <div className="results-statistics">
-          <div className="stat-box">
-            <div className="stat-label">Total Votes Cast</div>
-            <div className="stat-value">{statistics.totalVotesCast}</div>
-          </div>
-          <div className="stat-box">
-            <div className="stat-label">Total Flats</div>
-            <div className="stat-value">{statistics.totalFlats}</div>
-          </div>
-          <div className="stat-box">
-            <div className="stat-label">Voting Percentage</div>
-            <div className="stat-value">{statistics.votingPercentage}%</div>
-          </div>
-          <div className="stat-box">
-            <div className="stat-label">Non-Voting Flats</div>
-            <div className="stat-value">{statistics.nonVotingFlats?.length || 0}</div>
-          </div>
-        </div>
-
-        <div className="winners-section">
-          <h3>🏆 WINNERS 🏆</h3>
-          <div className="winners-list">
-            {winners.map((winner, index) => (
-              <div key={index} className="winner-item">
-                <div className="winner-medal">🥇</div>
-                <div className="winner-info">
-                  <div className="winner-name">{winner.candidateName}</div>
-                  <div className="winner-position">{winner.position}</div>
-                  <div className="winner-stats">
-                    {winner.totalVotes} votes ({winner.votePercentage}%)
-                  </div>
-                </div>
-                <div className="result-bar">
-                  <div
-                    className="result-bar-fill winner-bar"
-                    style={{ width: `${winner.votePercentage}%` }}
-                  ></div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="losers-section">
-          <h3>Other Candidates</h3>
-          <div className="losers-list">
-            {losers.map((loser, index) => (
-              <div key={index} className="loser-item">
-                <div className="loser-info">
-                  <div className="loser-name">{loser.candidateName}</div>
-                  <div className="loser-position">{loser.position}</div>
-                  <div className="loser-stats">
-                    {loser.totalVotes} votes ({loser.votePercentage}%)
-                  </div>
-                </div>
-                <div className="result-bar">
-                  <div
-                    className="result-bar-fill"
-                    style={{ width: `${loser.votePercentage}%` }}
-                  ></div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
 
         {statistics.nonVotingFlats?.length > 0 && (
-          <div className="non-voting-section">
+          <section className="nonvoting">
             <h3>Non-Voting Flats ({statistics.nonVotingFlats.length})</h3>
-            <div className="non-voting-list">
+            <div className="pill-list">
               {statistics.nonVotingFlats.map(flat => (
-                <span key={flat} className="non-voting-flat">{flat}</span>
+                <span key={flat} className="pill muted">{flat}</span>
               ))}
             </div>
-          </div>
+          </section>
         )}
+
+        <footer className="luxury-footer">
+          <p>Developed by Muhammad Ali Hadi</p>
+        </footer>
       </div>
-    )
-  }
+    );
+  };
 
   return (
-    <div className="results-container">
-      <div className="results-header">
-        <h1>Election Results</h1>
-        <div className="results-tabs">
-          <button
-            className={`tab-button ${resultsPage === 'ongoing' ? 'active' : ''}`}
-            onClick={() => setResultsPage('ongoing')}
-          >
-            Live Results
-          </button>
-          <button
-            className={`tab-button ${resultsPage === 'finalized' ? 'active' : ''}`}
-            onClick={() => setResultsPage('finalized')}
-          >
-            Final Results
-          </button>
+    <div className="results-container official-mode luxury-shell">
+      {phase === 'loading' && (
+        <div className="loading">
+          <div style={{ fontSize: '2rem', marginBottom: '16px' }}>⏳</div>
+          Loading election information...
         </div>
-      </div>
-
-      {loading && <div className="loading">Loading results...</div>}
-      {error && <div className="error-message">Error: {error}</div>}
-
-      {!loading && !error && (
-        resultsPage === 'ongoing' ? renderOngoingResults() : renderFinalizedResults()
       )}
 
-      <div className="results-actions">
-        <button onClick={() => onNavigate('vote')} className="btn-secondary">
-          Back to Voting
-        </button>
-      </div>
+      {phase === 'not_started' && renderNotStarted()}
+      {phase === 'ongoing' && renderOngoing()}
+      {phase === 'ended' && renderEnded()}
+      {phase === 'declared' && renderDeclared()}
+
+      {error && phase === 'error' && (
+        <div className="error-message">
+          <div style={{ fontSize: '1.5rem', marginBottom: '8px' }}>⚠️</div>
+          {error}
+        </div>
+      )}
+
+      {!isPublic && (
+        <div className="results-actions" style={{ marginTop: '32px', textAlign: 'center' }}>
+          <button 
+            onClick={() => onNavigate('vote')} 
+            className="btn-secondary"
+            style={{
+              padding: '12px 24px',
+              borderRadius: '8px',
+              fontSize: '1rem',
+              cursor: 'pointer'
+            }}
+          >
+            ← Back to Voting
+          </button>
+        </div>
+      )}
     </div>
-  )
+  );
 }
 
-export default Results
-
+export default Results;

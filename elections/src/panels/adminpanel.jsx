@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react'
-import { attendanceAPI, voteAPI, candidateAPI, resultsAPI } from '../services/api'
+import { attendanceAPI, voteAPI, candidateAPI, resultsAPI, adminAPI } from '../services/api'
 
 const ENV_ELECTION_ID = import.meta.env.VITE_ELECTION_ID
 const DEFAULT_ELECTION_ID = '69657a9d6767a0bc1e83ec02'
@@ -7,7 +7,7 @@ const DEFAULT_ELECTION_ID = '69657a9d6767a0bc1e83ec02'
 // Available positions from the schema
 const DEFAULT_POSITIONS = ['President', 'Vice President', 'General Secretary', 'Joint Secretary', 'Finance Secretary']
 
-function AdminPanel({ electionData, setElectionData, onNavigate }) {
+function AdminPanel({ electionData = { candidates: [] }, setElectionData, onNavigate }) {
   const ELECTION_ID = ENV_ELECTION_ID
     || electionData?._id
     || electionData?.electionId
@@ -30,12 +30,29 @@ function AdminPanel({ electionData, setElectionData, onNavigate }) {
     const saved = localStorage.getItem('resultsFinalized')
     return saved === 'true' ? true : false
   })
+  const [isOpenLocal, setIsOpenLocal] = useState(() => {
+    const saved = localStorage.getItem('electionIsOpen')
+    if (saved === 'false') return false
+    if (saved === 'true') return true
+    return electionData?.isOpen !== undefined ? electionData.isOpen : false
+  })
   const [showFinalizeConfirm, setShowFinalizeConfirm] = useState(false)
   const [liveAttendance, setLiveAttendance] = useState({})
   const [liveResults, setLiveResults] = useState({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [actionLoading, setActionLoading] = useState(false)
+  const [rejectedVotes, setRejectedVotes] = useState(0)
+  const [resultsStatus, setResultsStatus] = useState('ongoing')
+  const [scheduleStart, setScheduleStart] = useState('')
+  const [scheduleEnd, setScheduleEnd] = useState('')
+  const [autoOpenEnabled, setAutoOpenEnabled] = useState(false)
+  const [scheduleEditedAt, setScheduleEditedAt] = useState(0)
+  const [scheduleDirty, setScheduleDirty] = useState(false)
+  const [showRejectModal, setShowRejectModal] = useState(false)
+  const [votedFlats, setVotedFlats] = useState([])
+  const [selectedFlats, setSelectedFlats] = useState([])
+  const [refreshKey, setRefreshKey] = useState(0)
 
   // Save activeTab to localStorage whenever it changes
   useEffect(() => {
@@ -47,13 +64,58 @@ function AdminPanel({ electionData, setElectionData, onNavigate }) {
     localStorage.setItem('resultsFinalized', resultsFinalized.toString())
   }, [resultsFinalized])
 
+  // Sync local open state to storage and upstream electionData
+  useEffect(() => {
+    if (electionData?.isOpen !== undefined) {
+      setIsOpenLocal(electionData.isOpen)
+      localStorage.setItem('electionIsOpen', electionData.isOpen.toString())
+    }
+  }, [electionData?.isOpen])
+
   // Fetch real-time data from backend
   useEffect(() => {
     const fetchRealtimeData = async () => {
       try {
         console.log('📊 AdminPanel: Fetching real-time admin data...')
         setError('')
+        const scheduleLocked = scheduleDirty || (scheduleEditedAt && (Date.now() - scheduleEditedAt < 4000))
         
+        // Fetch latest election status
+        try {
+          const statusResp = await adminAPI.getElectionStatus(ELECTION_ID)
+          if (statusResp?.election) {
+            const { isOpen, startDate, endDate, autoOpenEnabled: autoMode } = statusResp.election
+            const sched = statusResp.schedule || {}
+            if (isOpen !== undefined) {
+              setIsOpenLocal(isOpen)
+              localStorage.setItem('electionIsOpen', isOpen.toString())
+              setElectionData(prev => ({ ...prev, isOpen }))
+            }
+            // If user is editing schedule right now, avoid overwriting their inputs with stale poll
+            if (scheduleDirty) {
+              return
+            }
+            const startVal = sched.startDate || startDate
+            const endVal = sched.endDate || endDate
+            if (!scheduleLocked) {
+              const nextStart = startVal ? new Date(startVal).toISOString().slice(0, 16) : ''
+              const nextEnd = endVal ? new Date(endVal).toISOString().slice(0, 16) : ''
+              setScheduleStart(prev => prev === nextStart ? prev : nextStart)
+              setScheduleEnd(prev => prev === nextEnd ? prev : nextEnd)
+              setAutoOpenEnabled(Boolean(sched.autoOpenEnabled ?? autoMode))
+            } else {
+              // Keep local edits but still refresh open status display
+              if (isOpen !== undefined) {
+                setIsOpenLocal(isOpen)
+                localStorage.setItem('electionIsOpen', isOpen.toString())
+                setElectionData(prev => ({ ...prev, isOpen }))
+              }
+            }
+          }
+        } catch (statusErr) {
+          console.warn('Could not fetch election status:', statusErr.message)
+        }
+
         // Fetch candidates from API to ensure we have latest data
         const candidatesData = await candidateAPI.getCandidates(ELECTION_ID)
         console.log('📋 Candidates fetched:', candidatesData)
@@ -76,7 +138,9 @@ function AdminPanel({ electionData, setElectionData, onNavigate }) {
               name: record.name,
               loginTime: new Date(record.loginTime).toLocaleTimeString(),
               voteTime: record.voteTime ? new Date(record.voteTime).toLocaleTimeString() : null,
-              voted: record.voted
+              voted: record.voted,
+              rejected: Boolean(record.rejected),
+              rejectedAt: record.rejectedAt ? new Date(record.rejectedAt).toLocaleTimeString() : null
             }
           })
         }
@@ -86,6 +150,18 @@ function AdminPanel({ electionData, setElectionData, onNavigate }) {
         const results = await voteAPI.getResults(ELECTION_ID)
         console.log('📊 Election Results:', results)
         setLiveResults(results.results || {})
+
+        // Fetch finalized/cancelled stats if available
+        try {
+          const finalized = await resultsAPI.getFinalizedResults(ELECTION_ID)
+          if (finalized?.results?.statistics) {
+            setRejectedVotes(finalized.results.statistics.rejectedVotes || 0)
+            setResultsStatus(finalized.results.electionStatus || 'declared')
+          }
+        } catch (finalErr) {
+          setResultsStatus('ongoing')
+          setRejectedVotes(0)
+        }
         
         setLoading(false)
       } catch (error) {
@@ -102,7 +178,7 @@ function AdminPanel({ electionData, setElectionData, onNavigate }) {
     const pollInterval = setInterval(fetchRealtimeData, 5000)
     
     return () => clearInterval(pollInterval)
-  }, [setElectionData, ELECTION_ID])
+  }, [setElectionData, ELECTION_ID, refreshKey, scheduleEditedAt, scheduleDirty])
 
   const handleAddCandidate = async () => {
     if (!newCandidate.name?.trim() || !newCandidate.position?.trim()) {
@@ -225,11 +301,125 @@ function AdminPanel({ electionData, setElectionData, onNavigate }) {
     }
   }
 
-  const handleToggleElection = () => {
-    setElectionData(prev => ({
-      ...prev,
-      isOpen: !prev.isOpen
-    }))
+  const handleToggleElection = async () => {
+    const next = !isOpenLocal
+    setActionLoading(true)
+    setError('')
+    try {
+      const response = await adminAPI.setElectionStatus(ELECTION_ID, next)
+      if (!response.success && response.election?.isOpen === undefined) {
+        throw new Error(response.message || 'Failed to update election status')
+      }
+      const newState = response.election?.isOpen ?? next
+      setIsOpenLocal(newState)
+      localStorage.setItem('electionIsOpen', newState.toString())
+      setAutoOpenEnabled(Boolean(response.election?.autoOpenEnabled))
+      setElectionData(prevState => ({ ...prevState, isOpen: newState }))
+    } catch (err) {
+      console.error('Error toggling election:', err)
+      setError(err.message || 'Failed to toggle election')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const onScheduleStartChange = (e) => {
+    setScheduleStart(e.target.value)
+    setScheduleEditedAt(Date.now())
+    setScheduleDirty(true)
+  }
+
+  const onScheduleEndChange = (e) => {
+    setScheduleEnd(e.target.value)
+    setScheduleEditedAt(Date.now())
+    setScheduleDirty(true)
+  }
+
+  const onAutoToggleChange = (e) => {
+    setAutoOpenEnabled(e.target.checked)
+    setScheduleEditedAt(Date.now())
+    setScheduleDirty(true)
+  }
+
+  const handleScheduleSave = async () => {
+    if (!scheduleStart || !scheduleEnd) {
+      setError('Please select both start and end date/time for the schedule')
+      return
+    }
+
+    const startISO = new Date(scheduleStart)
+    const endISO = new Date(scheduleEnd)
+
+    if (startISO >= endISO) {
+      setError('Schedule start must be before end')
+      return
+    }
+
+    setActionLoading(true)
+    setError('')
+    try {
+      const response = await adminAPI.updateElectionSchedule(ELECTION_ID, {
+        startDate: startISO,
+        endDate: endISO,
+        autoOpenEnabled
+      })
+      if (!response.success) {
+        throw new Error(response.message || 'Failed to update schedule')
+      }
+      const updated = response.election
+      const schedule = response.schedule || {}
+      setIsOpenLocal(updated.isOpen)
+      localStorage.setItem('electionIsOpen', updated.isOpen.toString())
+      const startVal = schedule.startDate || updated.startDate
+      const endVal = schedule.endDate || updated.endDate
+      if (startVal) setScheduleStart(new Date(startVal).toISOString().slice(0, 16))
+      if (endVal) setScheduleEnd(new Date(endVal).toISOString().slice(0, 16))
+      setAutoOpenEnabled(Boolean(schedule.autoOpenEnabled ?? updated.autoOpenEnabled))
+      setElectionData(prev => ({ ...prev, isOpen: updated.isOpen }))
+      setScheduleEditedAt(0)
+      setScheduleDirty(false)
+    } catch (err) {
+      console.error('Schedule update error:', err)
+      setError(err.message || 'Failed to update schedule')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const handleResetElection = async () => {
+    if (!window.confirm('This will clear all votes, results, attendance, and candidates for the next election. Continue?')) {
+      return
+    }
+    setActionLoading(true)
+    setError('')
+    try {
+      const response = await adminAPI.resetElection(ELECTION_ID, {
+        startDate: scheduleStart ? new Date(scheduleStart) : undefined,
+        endDate: scheduleEnd ? new Date(scheduleEnd) : undefined
+      })
+      if (!response.success) {
+        throw new Error(response.message || 'Failed to reset election')
+      }
+      setIsOpenLocal(false)
+      localStorage.setItem('electionIsOpen', 'false')
+      setResultsFinalized(false)
+      setResultsStatus('ongoing')
+      setRejectedVotes(0)
+      setLiveResults({})
+      setLiveAttendance({})
+      setVotedFlats([])
+      setSelectedFlats([])
+      setShowRejectModal(false)
+      setElectionData(prev => ({ ...prev, candidates: [], isOpen: false }))
+      setScheduleEditedAt(0)
+      setScheduleDirty(false)
+      alert('Election reset successfully. You can now set schedule and add candidates for the next election.')
+    } catch (err) {
+      console.error('Reset election error:', err)
+      setError(err.message || 'Failed to reset election')
+    } finally {
+      setActionLoading(false)
+    }
   }
 
   const positions = useMemo(() => {
@@ -280,6 +470,9 @@ function AdminPanel({ electionData, setElectionData, onNavigate }) {
 
   const totalFlats = 105 // A-1 to A-45 (45) + B-1 to B-60 (60)
   const participationRate = ((voteStats.totalVoters / totalFlats) * 100).toFixed(1)
+  const votedCount = Object.values(liveAttendance).filter(a => a.voted).length
+  const rejectedCount = Object.values(liveAttendance).filter(a => a.rejected).length
+  const remainingApts = Math.max(totalFlats - votedCount, 0)
   
   const winners = useMemo(() => {
     const winnerList = {}
@@ -302,6 +495,8 @@ function AdminPanel({ electionData, setElectionData, onNavigate }) {
       
       setResultsFinalized(true)
       setShowFinalizeConfirm(false)
+      setIsOpenLocal(false)
+      localStorage.setItem('electionIsOpen', 'false')
       setElectionData(prev => ({
         ...prev,
         isOpen: false
@@ -318,9 +513,59 @@ function AdminPanel({ electionData, setElectionData, onNavigate }) {
     window.print()
   }
 
+  const openRejectVotes = async () => {
+    setActionLoading(true)
+    setError('')
+    try {
+      const flats = await resultsAPI.getVotedFlats(ELECTION_ID)
+      setVotedFlats(flats)
+      setSelectedFlats(flats.map(f => f.flatNumber))
+      setShowRejectModal(true)
+    } catch (err) {
+      console.error('Failed to load voted flats:', err)
+      setError(err.message || 'Failed to load voted flats')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const handleRejectVotes = async () => {
+    if (!selectedFlats.length) {
+      setError('Select at least one flat to reject votes')
+      return
+    }
+    setActionLoading(true)
+    setError('')
+    try {
+      const response = await resultsAPI.rejectVotes(ELECTION_ID, selectedFlats, true)
+      if (!response.success) {
+        throw new Error(response.message || 'Failed to reject votes')
+      }
+      setRejectedVotes(response.results?.votingStatistics?.rejectedVotes || rejectedVotes)
+      setIsOpenLocal(false)
+      localStorage.setItem('electionIsOpen', 'false')
+      setElectionData(prev => ({ ...prev, isOpen: false }))
+      setResultsStatus(response.results?.status || 'cancelled')
+      setShowRejectModal(false)
+      setRefreshKey(prev => prev + 1)
+
+      // Refresh rejected flats state locally
+      setVotedFlats(prev => prev.filter(f => !selectedFlats.includes(f.flatNumber)))
+      setSelectedFlats([])
+
+      alert('🚫 Selected votes have been rejected and the election is closed.')
+    } catch (err) {
+      console.error('Reject votes error:', err)
+      setError(err.message || 'Failed to reject votes')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
   return (
-    <div className="admin-container">
-      <div className="admin-card">
+    <>
+      <div className="admin-container">
+        <div className="admin-card">
         <h2>👤 Admin Dashboard</h2>
         <div style={{ marginBottom: '20px', padding: '10px', backgroundColor: '#f0f0f0', borderRadius: '4px' }}>
           <p>✅ Admin authenticated and dashboard loaded successfully</p>
@@ -353,18 +598,44 @@ function AdminPanel({ electionData, setElectionData, onNavigate }) {
           <h3>Election Control</h3>
           <div className="control-panel">
             <div className="status-info">
-              <p>Election Status: <strong>{electionData.isOpen ? '🔓 Open' : '🔒 Closed'}</strong></p>
+              <p>Election Status: <strong>{isOpenLocal ? '🔓 Open' : '🔒 Closed'}</strong></p>
               <p>Total Votes: <strong>{voteStats.totalVoters}</strong></p>
               <p>Total Candidates: <strong>{electionData.candidates.length}</strong></p>
               <p>Present Residents: <strong>{Object.keys(liveAttendance).length}</strong></p>
               <p>Residents Voted: <strong>{Object.values(liveAttendance).filter(a => a.voted).length}</strong></p>
+              <p>Remaining Apartments: <strong>{remainingApts}</strong></p>
             </div>
             <button 
-              className={`btn-${electionData.isOpen ? 'danger' : 'primary'}`}
+              className={`btn-${isOpenLocal ? 'danger' : 'primary'}`}
               onClick={handleToggleElection}
             >
-              {electionData.isOpen ? 'Close Election' : 'Open Election'}
+              {isOpenLocal ? 'Close Election' : 'Open Election'}
             </button>
+          </div>
+
+          <div className="schedule-panel" style={{ marginTop: '14px', padding: '14px', border: '1px solid #e5e7eb', borderRadius: '8px', background: '#f9fafb' }}>
+            <h4 style={{ marginBottom: '10px' }}>Schedule & Auto Control</h4>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '10px', alignItems: 'center' }}>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <span>Voting Start (date & time)</span>
+                <input type="datetime-local" value={scheduleStart} onChange={onScheduleStartChange} className="form-input" />
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <span>Voting End (date & time)</span>
+                <input type="datetime-local" value={scheduleEnd} onChange={onScheduleEndChange} className="form-input" />
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px' }}>
+                <input type="checkbox" checked={autoOpenEnabled} onChange={onAutoToggleChange} />
+                <span>Auto open/close within schedule</span>
+              </label>
+            </div>
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '10px' }}>
+              <button className="btn-primary" onClick={handleScheduleSave} disabled={actionLoading}>Save Schedule</button>
+              <button className="btn-secondary" onClick={handleResetElection} disabled={actionLoading}>Reset for Next Election</button>
+            </div>
+            <div style={{ marginTop: '6px', color: '#4b5563', fontSize: '0.9rem' }}>
+              Auto mode opens voting between the scheduled start/end and closes it afterward. Manual toggle stays available.
+            </div>
           </div>
         </div>
 
@@ -532,9 +803,6 @@ function AdminPanel({ electionData, setElectionData, onNavigate }) {
                               <div className="candidate-details">
                                 <div className="candidate-name" style={{ fontWeight: 'bold' }}>{candidate.name}</div>
                                 {candidate.flatNumber && <div style={{ fontSize: '0.85rem', color: '#6b7280' }}>Flat: {candidate.flatNumber}</div>}
-                                <div style={{ fontSize: '0.9rem', color: '#059669', fontWeight: '500' }}>
-                                  Votes: {candidate.votes || 0}
-                                </div>
                               </div>
                               <div style={{ display: 'flex', gap: '8px' }}>
                                 <button
@@ -566,15 +834,7 @@ function AdminPanel({ electionData, setElectionData, onNavigate }) {
               </div>
             </div>
 
-            <div className="admin-section">
-              <h3>View Results</h3>
-              <button 
-                className="btn-primary"
-                onClick={() => onNavigate('results')}
-              >
-                Go to Results Page
-              </button>
-            </div>
+            {/* Results navigation removed per request */}
           </>
         )}
 
@@ -594,6 +854,14 @@ function AdminPanel({ electionData, setElectionData, onNavigate }) {
                 <h4>Not Yet Voted</h4>
                 <p className="stat-number pending">{Object.values(liveAttendance).filter(a => !a.voted).length}</p>
               </div>
+              <div className="stat-box">
+                <h4>Remaining Apartments</h4>
+                <p className="stat-number">{remainingApts}</p>
+              </div>
+              <div className="stat-box">
+                <h4>Rejected Votes</h4>
+                <p className="stat-number" style={{ color: '#b91c1c' }}>{rejectedCount}</p>
+              </div>
             </div>
 
             <div className="attendance-table">
@@ -605,6 +873,7 @@ function AdminPanel({ electionData, setElectionData, onNavigate }) {
                     <th>Login Time</th>
                     <th>Vote Status</th>
                     <th>Vote Time</th>
+                    <th>Rejection</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -612,21 +881,30 @@ function AdminPanel({ electionData, setElectionData, onNavigate }) {
                     Object.values(liveAttendance)
                       .sort((a, b) => a.flatNumber.localeCompare(b.flatNumber))
                       .map((record, idx) => (
-                        <tr key={idx} className={record.voted ? 'voted' : 'pending'}>
+                        <tr key={idx} className={record.voted ? 'voted' : record.rejected ? 'rejected' : 'pending'}>
                           <td className="flat-number"><strong>{record.flatNumber}</strong></td>
                           <td>{record.name}</td>
                           <td>{record.loginTime}</td>
                           <td>
-                            <span className={`status-badge ${record.voted ? 'voted' : 'pending'}`}>
-                              {record.voted ? '✓ Voted' : '⏳ Pending'}
+                            <span className={`status-badge ${record.voted ? 'voted' : record.rejected ? 'rejected' : 'pending'}`}>
+                              {record.rejected ? '🚫 Rejected' : record.voted ? '✓ Voted' : '⏳ Pending'}
                             </span>
                           </td>
                           <td>{record.voteTime || '-'}</td>
+                          <td>
+                            {record.rejected ? (
+                              <span className="status-badge rejected">
+                                Rejected {record.rejectedAt ? `@ ${record.rejectedAt}` : ''}
+                              </span>
+                            ) : (
+                              <span className="status-badge muted">—</span>
+                            )}
+                          </td>
                         </tr>
                       ))
                   ) : (
                     <tr>
-                      <td colSpan="5" style={{ textAlign: 'center', color: '#999' }}>
+                      <td colSpan="6" style={{ textAlign: 'center', color: '#999' }}>
                         No attendance records yet
                       </td>
                     </tr>
@@ -642,6 +920,20 @@ function AdminPanel({ electionData, setElectionData, onNavigate }) {
             <div className="finalize-header">
               <h3>🏛️ ELECTION COMMITTEE OF ALLAH NOOR</h3>
               <div className="committee-subtitle">Results remain confidential during voting</div>
+              <div className="muted-text" style={{ marginTop: '6px', display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                <span>Shareable final results link (after declaration):</span>
+                <span style={{ fontWeight: 600 }}>{window.location.origin}/#/final-results</span>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  style={{ padding: '6px 10px', fontSize: '0.85rem' }}
+                  onClick={() => {
+                    navigator.clipboard?.writeText(`${window.location.origin}/#/final-results`).catch(() => {})
+                  }}
+                >
+                  Copy Link
+                </button>
+              </div>
             </div>
 
             {!resultsFinalized ? (
@@ -652,13 +944,22 @@ function AdminPanel({ electionData, setElectionData, onNavigate }) {
 
                 <div className="finalize-actions" style={{ marginTop: '10px' }}>
                   {!showFinalizeConfirm ? (
-                    <button 
-                      className="btn-finalize"
-                      onClick={() => setShowFinalizeConfirm(true)}
-                      disabled={electionData.isOpen}
-                    >
-                      🔒 Compile & Reveal Results
-                    </button>
+                    <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                      <button 
+                        className="btn-finalize"
+                        onClick={() => setShowFinalizeConfirm(true)}
+                        disabled={electionData.isOpen}
+                      >
+                        🔒 Compile & Reveal Results
+                      </button>
+                      <button
+                        className="btn-danger"
+                        onClick={openRejectVotes}
+                        disabled={actionLoading}
+                      >
+                        🚫 Reject / Cancel Votes
+                      </button>
+                    </div>
                   ) : (
                     <div className="confirm-dialog">
                       <p>⚠️ Once compiled, results are revealed. Continue?</p>
@@ -709,6 +1010,11 @@ function AdminPanel({ electionData, setElectionData, onNavigate }) {
                     <h4>Present Residents</h4>
                     <p className="stat-value">{Object.keys(liveAttendance).length}</p>
                   </div>
+                  <div className="stat-card">
+                    <div className="stat-icon">🚫</div>
+                    <h4>Rejected Votes</h4>
+                    <p className="stat-value">{rejectedVotes}</p>
+                  </div>
                 </div>
 
                 {/* Winners Section */}
@@ -754,19 +1060,98 @@ function AdminPanel({ electionData, setElectionData, onNavigate }) {
                   <div className="finalized-badge">
                     ✓ Results Officially Finalized
                   </div>
-                  <button 
-                    className="btn-print"
-                    onClick={handlePrintResults}
-                  >
-                    🖨️ Print Official Results
-                  </button>
+                  <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                    <button 
+                      className="btn-print"
+                      onClick={handlePrintResults}
+                    >
+                      🖨️ Print Official Results
+                    </button>
+                    <button
+                      className="btn-danger"
+                      onClick={openRejectVotes}
+                      disabled={actionLoading}
+                    >
+                      🚫 Reject / Cancel Votes
+                    </button>
+                  </div>
                 </div>
               </>
             )}
           </div>
         )}
+        </div>
       </div>
-    </div>
+
+      {showRejectModal && (
+        <div className="modal-overlay" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }}>
+          <div className="modal-card" style={{ background: '#fff', padding: '20px', borderRadius: '8px', width: 'min(720px, 96vw)', maxHeight: '80vh', overflow: 'auto', boxShadow: '0 10px 30px rgba(0,0,0,0.15)' }}>
+            <h3 style={{ marginBottom: '10px' }}>Select Flats to Reject Votes</h3>
+            <p style={{ marginBottom: '10px', color: '#4b5563' }}>Only the selected flats will have their recorded votes removed. Election will be marked cancelled and closed.</p>
+            <div style={{ border: '1px solid #e5e7eb', borderRadius: '6px', overflow: 'hidden' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead style={{ background: '#f9fafb' }}>
+                  <tr>
+                    <th style={{ textAlign: 'left', padding: '10px' }}>
+                      <input
+                        type="checkbox"
+                        checked={selectedFlats.length === votedFlats.length && votedFlats.length > 0}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedFlats(votedFlats.map(f => f.flatNumber))
+                          } else {
+                            setSelectedFlats([])
+                          }
+                        }}
+                      />
+                    </th>
+                    <th style={{ textAlign: 'left', padding: '10px' }}>Flat</th>
+                    <th style={{ textAlign: 'left', padding: '10px' }}>Name</th>
+                    <th style={{ textAlign: 'left', padding: '10px' }}>Vote Time</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {votedFlats.length === 0 ? (
+                    <tr>
+                      <td colSpan="4" style={{ padding: '12px', textAlign: 'center', color: '#9ca3af' }}>No voted flats to display</td>
+                    </tr>
+                  ) : (
+                    votedFlats.map((flat, idx) => {
+                      const checked = selectedFlats.includes(flat.flatNumber)
+                      return (
+                        <tr key={`${flat.flatNumber}-${idx}`} style={{ borderTop: '1px solid #e5e7eb' }}>
+                          <td style={{ padding: '10px' }}>
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(e) => {
+                                setSelectedFlats(prev => {
+                                  if (e.target.checked) return [...new Set([...prev, flat.flatNumber])]
+                                  return prev.filter(f => f !== flat.flatNumber)
+                                })
+                              }}
+                            />
+                          </td>
+                          <td style={{ padding: '10px', fontWeight: 600 }}>{flat.flatNumber}</td>
+                          <td style={{ padding: '10px' }}>{flat.name || 'Resident'}</td>
+                          <td style={{ padding: '10px' }}>{flat.voteTime ? new Date(flat.voteTime).toLocaleString() : '-'}</td>
+                        </tr>
+                      )
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '14px' }}>
+              <button className="btn-secondary" onClick={() => setShowRejectModal(false)} disabled={actionLoading}>Cancel</button>
+              <button className="btn-danger" onClick={handleRejectVotes} disabled={actionLoading || selectedFlats.length === 0}>
+                {actionLoading ? 'Rejecting...' : `Reject Selected (${selectedFlats.length})`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   )
 }
 

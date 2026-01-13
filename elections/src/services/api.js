@@ -2,19 +2,22 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5001
 
 console.log('API Base URL:', API_BASE_URL);
 
-// Helper function to get auth token
+// Token helpers: use sessionStorage for per-tab isolation so admin and voter can stay signed in on different tabs/devices without clobbering tokens.
+const TOKEN_KEY = 'authToken';
+
 const getAuthToken = () => {
-  return localStorage.getItem('authToken');
+  return sessionStorage.getItem(TOKEN_KEY) || localStorage.getItem(TOKEN_KEY) || null;
 };
 
-// Helper function to set auth token
 const setAuthToken = (token) => {
-  localStorage.setItem('authToken', token);
+  sessionStorage.setItem(TOKEN_KEY, token);
+  // Clean old storage to avoid cross-tab leakage
+  localStorage.removeItem(TOKEN_KEY);
 };
 
-// Helper function to clear auth token
 const clearAuthToken = () => {
-  localStorage.removeItem('authToken');
+  sessionStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(TOKEN_KEY);
 };
 
 // Helper function for API calls
@@ -77,6 +80,33 @@ export const adminAPI = {
   getProfile: async () => {
     return apiCall('/admin/profile', {
       method: 'GET',
+    });
+  },
+
+  setElectionStatus: async (electionId, isOpen) => {
+    return apiCall(`/admin/election/${electionId}/status`, {
+      method: 'PUT',
+      body: JSON.stringify({ isOpen }),
+    });
+  },
+
+  getElectionStatus: async (electionId) => {
+    return apiCall(`/admin/election/${electionId}/status`, {
+      method: 'GET',
+    });
+  },
+
+  updateElectionSchedule: async (electionId, schedule) => {
+    return apiCall(`/admin/election/${electionId}/schedule`, {
+      method: 'PUT',
+      body: JSON.stringify(schedule),
+    });
+  },
+
+  resetElection: async (electionId, payload = {}) => {
+    return apiCall(`/admin/election/${electionId}/reset`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
     });
   },
 };
@@ -291,6 +321,13 @@ export const resultsAPI = {
     return response.results || response;
   },
 
+  getElectionScheduleStatus: async (electionId) => {
+    const response = await apiCall(`/results/${electionId}/schedule-status`, {
+      method: 'GET',
+    });
+    return response;
+  },
+
   getResultsByPosition: async (electionId, position) => {
     const response = await apiCall(`/results/${electionId}/position/${position}`, {
       method: 'GET',
@@ -303,6 +340,21 @@ export const resultsAPI = {
       method: 'POST',
     });
     return response;
+  },
+
+  rejectVotes: async (electionId, flats, cancelElection = true) => {
+    const response = await apiCall(`/results/${electionId}/reject`, {
+      method: 'POST',
+      body: JSON.stringify({ flats, cancelElection }),
+    });
+    return response;
+  },
+
+  getVotedFlats: async (electionId) => {
+    const response = await apiCall(`/results/${electionId}/voted-flats`, {
+      method: 'GET',
+    });
+    return response.flats || [];
   },
 
   getFinalizedResults: async (electionId) => {

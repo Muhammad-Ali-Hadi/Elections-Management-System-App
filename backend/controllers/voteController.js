@@ -3,6 +3,8 @@ const Candidate = require('../models/Candidate');
 const Attendance = require('../models/Attendance');
 const Results = require('../models/Results');
 const Voter = require('../models/Voter');
+const Election = require('../models/Election');
+const Schedule = require('../models/Schedule');
 const mongoose = require('mongoose');
 
 // Cast vote - simplified for single-node MongoDB (no replica transactions)
@@ -19,6 +21,115 @@ exports.castVote = async (req, res) => {
       return res.status(400).json({ 
         success: false,
         message: 'Election ID and votes are required' 
+      });
+    }
+
+    // Ensure election exists and is open
+    const election = await Election.findById(electionId).select('isOpen name startDate endDate autoOpenEnabled').lean();
+    if (!election) {
+      return res.status(404).json({
+        success: false,
+        message: 'Election not found'
+      });
+    }
+
+    // Block voting for flats whose prior votes were rejected
+    const priorAttendance = await Attendance.findOne({ voterId, electionId }).select('rejected').lean();
+    if (priorAttendance?.rejected) {
+      return res.status(403).json({
+        success: false,
+        message: 'Your previous vote was rejected by the admin. You cannot vote again in this election.',
+        electionOpen: false,
+        rejected: true
+      });
+    }
+
+    // Enforce scheduled window when auto mode is enabled and dates are valid
+    const now = new Date();
+
+    // Prefer schedule document as source of truth for timing
+    let scheduleStart = election.startDate ? new Date(election.startDate) : null;
+    let scheduleEnd = election.endDate ? new Date(election.endDate) : null;
+
+    if (election.autoOpenEnabled) {
+      const scheduleDoc = await Schedule.findOne({ electionId }).lean();
+      if (scheduleDoc?.startDate) {
+        scheduleStart = new Date(scheduleDoc.startDate);
+      }
+      if (scheduleDoc?.endDate) {
+        scheduleEnd = new Date(scheduleDoc.endDate);
+      }
+
+      // Keep election document aligned with persisted schedule when auto mode is active
+      if (scheduleDoc?.startDate || scheduleDoc?.endDate) {
+        const syncUpdate = {};
+        if (scheduleDoc.startDate && scheduleStart && !Number.isNaN(scheduleStart.getTime())) {
+          const existingStart = election.startDate ? new Date(election.startDate).getTime() : null;
+          if (existingStart !== scheduleStart.getTime()) {
+            syncUpdate.startDate = scheduleStart;
+          }
+        }
+        if (scheduleDoc.endDate && scheduleEnd && !Number.isNaN(scheduleEnd.getTime())) {
+          const existingEnd = election.endDate ? new Date(election.endDate).getTime() : null;
+          if (existingEnd !== scheduleEnd.getTime()) {
+            syncUpdate.endDate = scheduleEnd;
+          }
+        }
+        if (Object.keys(syncUpdate).length > 0) {
+          syncUpdate.updatedAt = new Date();
+          await Election.findByIdAndUpdate(electionId, syncUpdate);
+        }
+      }
+    }
+
+    const hasValidSchedule = Boolean(
+      scheduleStart && scheduleEnd &&
+      !Number.isNaN(scheduleStart.getTime()) &&
+      !Number.isNaN(scheduleEnd.getTime())
+    );
+
+    const withinSchedule = election.autoOpenEnabled && hasValidSchedule
+      ? now >= scheduleStart && now <= scheduleEnd
+      : true;
+
+    // When auto mode is enabled with a valid schedule, sync isOpen and compute effectiveOpen
+    let effectiveOpen = election.isOpen;
+
+    if (election.autoOpenEnabled && hasValidSchedule) {
+      if (!withinSchedule) {
+        // Persist closure if we are outside the window
+        await Election.findByIdAndUpdate(electionId, { isOpen: false, updatedAt: new Date() });
+        return res.status(403).json({
+          success: false,
+          message: 'Voting is closed for this election (outside scheduled window)',
+          electionOpen: false
+        });
+      }
+
+      // Within window: ensure open flag matches schedule
+      await Election.findByIdAndUpdate(electionId, { isOpen: true, updatedAt: new Date() });
+      effectiveOpen = true;
+    } else if (!election.autoOpenEnabled) {
+      // Manual mode: re-fetch the latest isOpen from DB to avoid stale reads
+      const freshElection = await Election.findById(electionId).select('isOpen').lean();
+      effectiveOpen = freshElection?.isOpen ?? election.isOpen;
+    }
+
+    if (!effectiveOpen) {
+      return res.status(403).json({
+        success: false,
+        message: 'Voting is closed for this election',
+        electionOpen: false
+      });
+    }
+
+    // Block voting if results have been declared or cancelled
+    const existingResults = await Results.findOne({ electionId }).select('electionStatus').lean();
+    if (existingResults && existingResults.electionStatus && existingResults.electionStatus !== 'ongoing') {
+      return res.status(403).json({
+        success: false,
+        message: 'Voting is closed for this election',
+        electionOpen: false
       });
     }
 
@@ -266,6 +377,15 @@ exports.checkVoterStatus = async (req, res) => {
       });
     }
 
+    // Ensure election exists and get open/closed status
+    const election = await Election.findById(electionId).select('isOpen name').lean();
+    if (!election) {
+      return res.status(404).json({
+        success: false,
+        message: 'Election not found'
+      });
+    }
+
     // Use lean and select only necessary fields for speed
     const vote = await Vote.findOne({ voterId, electionId })
       .select('timestamp flatNumber')
@@ -285,6 +405,11 @@ exports.checkVoterStatus = async (req, res) => {
         timestamp: vote.timestamp,
         flatNumber: vote.flatNumber
       } : null,
+      election: {
+        isOpen: election.isOpen,
+        name: election.name,
+        id: electionId
+      },
       attendance: attendance ? {
         voted: attendance.voted,
         voteTime: attendance.voteTime,

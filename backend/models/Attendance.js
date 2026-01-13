@@ -29,6 +29,12 @@ const AttendanceSchema = new mongoose.Schema({
     default: false,
     index: true
   },
+  rejected: {
+    type: Boolean,
+    default: false,
+    index: true
+  },
+  rejectedAt: Date,
   ipAddress: String,
   userAgent: String,
   updatedAt: {
@@ -40,5 +46,6 @@ const AttendanceSchema = new mongoose.Schema({
 // Compound indexes for faster queries
 AttendanceSchema.index({ voterId: 1, electionId: 1 }, { unique: true });
 AttendanceSchema.index({ electionId: 1, voted: 1 });
+AttendanceSchema.index({ electionId: 1, rejected: 1 });
 
 module.exports = mongoose.model('Attendance', AttendanceSchema);

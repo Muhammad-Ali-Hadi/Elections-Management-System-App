@@ -26,11 +26,15 @@ const resultsSchema = new mongoose.Schema({
     totalFlats: Number,
     totalVotesCast: Number,
     votingPercentage: Number,
-    nonVotingFlats: [String]
+    nonVotingFlats: [String],
+    rejectedVotes: {
+      type: Number,
+      default: 0
+    }
   },
   electionStatus: {
     type: String,
-    enum: ['ongoing', 'declared', 'finalized'],
+    enum: ['ongoing', 'declared', 'finalized', 'cancelled'],
     default: 'ongoing'
   },
   declaredAt: Date,

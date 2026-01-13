@@ -14,6 +14,10 @@ const ElectionSchema = new mongoose.Schema({
     type: Date,
     required: true
   },
+  autoOpenEnabled: {
+    type: Boolean,
+    default: false
+  },
   isOpen: {
     type: Boolean,
     default: true,

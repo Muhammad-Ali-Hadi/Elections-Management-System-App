@@ -8,5 +8,9 @@ router.post('/login', adminController.loginAdmin);
 
 // Protected routes
 router.get('/profile', verifyToken, isAdmin, adminController.getAdminProfile);
+router.put('/election/:electionId/status', verifyToken, isAdmin, adminController.setElectionStatus);
+router.get('/election/:electionId/status', verifyToken, isAdmin, adminController.getElectionStatus);
+router.put('/election/:electionId/schedule', verifyToken, isAdmin, adminController.updateElectionSchedule);
+router.post('/election/:electionId/reset', verifyToken, isAdmin, adminController.resetElection);
 
 module.exports = router;

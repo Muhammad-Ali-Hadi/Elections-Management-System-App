@@ -8,6 +8,7 @@ function VoteCasting({ electionData, setElectionData, currentUser, onNavigate, r
   const [checkingStatus, setCheckingStatus] = useState(true)
   const [error, setError] = useState('')
   const [hasVotedFromAPI, setHasVotedFromAPI] = useState(false)
+  const [isElectionOpen, setIsElectionOpen] = useState(true)
 
   const ELECTION_ID = electionData._id || electionData.electionId
 
@@ -24,6 +25,16 @@ function VoteCasting({ electionData, setElectionData, currentUser, onNavigate, r
         const response = await voteAPI.checkVoterStatus(ELECTION_ID)
         console.log('Vote status response:', response)
         
+        if (response?.election) {
+          setIsElectionOpen(response.election.isOpen !== false)
+          setElectionData(prev => ({
+            ...prev,
+            isOpen: response.election.isOpen,
+            name: response.election.name || prev.name,
+            _id: response.election.id || prev._id || ELECTION_ID
+          }))
+        }
+
         if (response.hasVoted) {
           console.log('✅ User has already voted')
           setHasVotedFromAPI(true)
@@ -37,14 +48,6 @@ function VoteCasting({ electionData, setElectionData, currentUser, onNavigate, r
               }
             }
           }))
-        }
-
-        // Also record attendance when page loads
-        try {
-          await attendanceAPI.recordAttendance(ELECTION_ID)
-          console.log('📋 Attendance recorded')
-        } catch (attendanceErr) {
-          console.log('Attendance might already be recorded:', attendanceErr.message)
         }
       } catch (err) {
         console.error('Error checking vote status:', err)
@@ -79,6 +82,7 @@ function VoteCasting({ electionData, setElectionData, currentUser, onNavigate, r
   }, [selectedCandidates])
 
   const hasVoted = hasVotedFromAPI || electionData.votes[currentUser?.id] !== undefined
+  const electionClosed = !isElectionOpen
   const positions = [...new Set(electionData.candidates.map(c => c.position))]
 
   const handleVoteSelect = useCallback((candidateId, position) => {
@@ -89,6 +93,11 @@ function VoteCasting({ electionData, setElectionData, currentUser, onNavigate, r
   }, [])
 
   const handleSubmitVote = async () => {
+    if (electionClosed) {
+      setError('Voting is closed by the admin for this election.')
+      return
+    }
+
     if (hasVoted) {
       setError('You have already voted. You cannot vote again!')
       return
@@ -200,6 +209,18 @@ function VoteCasting({ electionData, setElectionData, currentUser, onNavigate, r
     )
   }
 
+  if (electionClosed) {
+    return (
+      <div className="vote-container">
+        <div className="vote-card" style={{ textAlign: 'center', padding: '32px' }}>
+          <h2>Voting Closed</h2>
+          <p className="voter-info">Voting has been closed by the admin. You cannot cast a vote until it is reopened.</p>
+          <button className="btn-secondary" onClick={() => onNavigate('profile')}>Return to Profile</button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="vote-container">
       <div className="vote-card">
@@ -219,7 +240,7 @@ function VoteCasting({ electionData, setElectionData, currentUser, onNavigate, r
                       key={candidateId}
                       className={`candidate-btn ${selectedCandidates[position] === candidateId ? 'selected' : ''}`}
                       onClick={() => handleVoteSelect(candidateId, position)}
-                      disabled={loading}
+                      disabled={loading || electionClosed}
                     >
                       <div className="candidate-radio">
                         {selectedCandidates[position] === candidateId && <div className="radio-inner"></div>}
@@ -260,7 +281,7 @@ function VoteCasting({ electionData, setElectionData, currentUser, onNavigate, r
           <button
             className="btn-primary"
             onClick={handleSubmitVote}
-            disabled={Object.keys(selectedCandidates).length !== positions.length || loading}
+            disabled={Object.keys(selectedCandidates).length !== positions.length || loading || electionClosed}
           >
             {loading ? 'Submitting...' : 'Submit Vote'}
           </button>
