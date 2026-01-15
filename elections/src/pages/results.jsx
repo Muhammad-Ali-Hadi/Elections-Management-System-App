@@ -47,6 +47,13 @@ function Results({ onNavigate, isPublic = false }) {
           
           const electionPhase = info.phase;
           
+          // Immediately calculate countdown based on phase
+          if (electionPhase === 'not_started' && info.startDate) {
+            setCountdown(calculateCountdown(info.startDate));
+          } else if (electionPhase === 'ongoing' && info.endDate) {
+            setCountdown(calculateCountdown(info.endDate));
+          }
+          
           if (electionPhase === 'declared') {
             try {
               const resultsData = await resultsAPI.getFinalizedResults(ELECTION_ID);
@@ -76,21 +83,49 @@ function Results({ onNavigate, isPublic = false }) {
     fetchData();
     const poll = setInterval(fetchData, 8000);
     return () => clearInterval(poll);
-  }, [ELECTION_ID]);
+  }, [ELECTION_ID, calculateCountdown]);
 
-  // Countdown timer effect
+  // Countdown timer effect - runs every second
   useEffect(() => {
-    if (phase === 'not_started' && electionInfo?.startDate) {
-      const timer = setInterval(() => {
-        setCountdown(calculateCountdown(electionInfo.startDate));
+    let timer = null;
+    
+    const updateCountdown = () => {
+      if (phase === 'not_started' && electionInfo?.startDate) {
+        const newCountdown = calculateCountdown(electionInfo.startDate);
+        setCountdown(newCountdown);
+        return newCountdown.total > 0;
+      } else if (phase === 'ongoing' && electionInfo?.endDate) {
+        const newCountdown = calculateCountdown(electionInfo.endDate);
+        setCountdown(newCountdown);
+        return newCountdown.total > 0;
+      }
+      return false;
+    };
+    
+    if ((phase === 'not_started' && electionInfo?.startDate) || 
+        (phase === 'ongoing' && electionInfo?.endDate)) {
+      // Start the interval timer
+      timer = setInterval(() => {
+        const shouldContinue = updateCountdown();
+        if (!shouldContinue && timer) {
+          clearInterval(timer);
+        }
       }, 1000);
-      return () => clearInterval(timer);
-    } else if (phase === 'ongoing' && electionInfo?.endDate) {
-      const timer = setInterval(() => {
-        setCountdown(calculateCountdown(electionInfo.endDate));
-      }, 1000);
-      return () => clearInterval(timer);
+      
+      // Run once immediately via timeout to avoid sync setState in effect
+      const immediateTimeout = setTimeout(() => {
+        updateCountdown();
+      }, 0);
+      
+      return () => {
+        if (timer) clearInterval(timer);
+        clearTimeout(immediateTimeout);
+      };
     }
+    
+    return () => {
+      if (timer) clearInterval(timer);
+    };
   }, [phase, electionInfo, calculateCountdown]);
 
   const formatDate = (dateStr) => {
