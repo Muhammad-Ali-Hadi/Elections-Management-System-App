@@ -51,7 +51,9 @@ function Results({ onNavigate, isPublic = false }) {
             try {
               const resultsData = await resultsAPI.getFinalizedResults(ELECTION_ID);
               console.log('Finalized results:', resultsData);
-              setFinalizedResults(resultsData);
+              // Unwrap the nested results object from API response
+              const payload = resultsData.results || resultsData;
+              setFinalizedResults(payload);
               setPhase('declared');
             } catch (err) {
               console.log('Results fetch error, showing ended:', err);
@@ -202,20 +204,41 @@ function Results({ onNavigate, isPublic = false }) {
   const renderDeclared = () => {
     if (!finalizedResults) return null;
 
-    // Handle both nested and flat response structures
-    const stats = finalizedResults.statistics || finalizedResults.votingStatistics || {};
+    // Access the correct nested structure from API
+    const stats = finalizedResults.statistics || {};
     const winnersList = finalizedResults.winners || [];
     const losersList = finalizedResults.losers || [];
     const allCandidates = finalizedResults.allCandidates || [...winnersList, ...losersList];
     const declaredAt = finalizedResults.declaredAt;
 
     const positions = new Set(allCandidates.map(c => c.position));
-    const totalVotes = stats.totalVotesCast || stats.totalVotes || 0;
-    const votingPercentage = stats.votingPercentage || Math.round((totalVotes / TOTAL_FLATS) * 100);
-    const remainingApartments = Math.max(TOTAL_FLATS - totalVotes, 0);
+    const totalVotes = Number(stats.totalVotesCast ?? stats.totalVotes ?? 0);
+    const totalVotesFallback = allCandidates.reduce((sum, c) => sum + Number(c.totalVotes || 0), 0);
+    const votesDenominator = totalVotes > 0 ? totalVotes : totalVotesFallback;
+    // Fix: Ensure totalFlats always uses TOTAL_FLATS constant (105) if API returns 0 or invalid
+    const rawTotalFlats = Number(stats.totalFlats);
+    const totalFlatsFromStats = (rawTotalFlats > 0) ? rawTotalFlats : TOTAL_FLATS;
+    const computedVotingPercentage = totalFlatsFromStats > 0 ? (totalVotes / totalFlatsFromStats) * 100 : 0;
+    const votingPercentageRaw = stats.votingPercentage != null ? Number(stats.votingPercentage) : computedVotingPercentage;
+    const votingPercentage = Number.isFinite(votingPercentageRaw) ? votingPercentageRaw : 0;
+    const remainingApartments = Math.max(totalFlatsFromStats - totalVotes, 0);
     const nonVotingFlats = stats.nonVotingFlats || [];
+    const rejectedVotes = Number(stats.rejectedVotes ?? 0);
 
-    console.log('Rendering declared with:', { stats, winnersList, losersList, totalVotes });
+    const computePct = (candidate) => {
+      if (candidate.votePercentage != null && Number.isFinite(Number(candidate.votePercentage))) {
+        return Number(candidate.votePercentage);
+      }
+      if (votesDenominator > 0) {
+        return Number(((Number(candidate.totalVotes || 0) / votesDenominator) * 100).toFixed(2));
+      }
+      return 0;
+    };
+
+    const winnersDisplay = winnersList.map(c => ({ ...c, votePercentage: computePct(c) }));
+    const allCandidatesDisplay = allCandidates.map(c => ({ ...c, votePercentage: computePct(c) }));
+
+    console.log('Rendering declared with:', { stats, winnersList, losersList, totalVotes, allCandidates });
 
     return (
       <div className="luxury-results">
@@ -237,11 +260,11 @@ function Results({ onNavigate, isPublic = false }) {
           </div>
           <div className="stat-card">
             <div className="label">Total Flats</div>
-            <div className="value">{stats.totalFlats ?? TOTAL_FLATS}</div>
+            <div className="value">{totalFlatsFromStats}</div>
           </div>
           <div className="stat-card highlight">
             <div className="label">Voting %</div>
-            <div className="value">{votingPercentage}%</div>
+            <div className="value">{votingPercentage.toFixed(1)}%</div>
           </div>
           <div className="stat-card">
             <div className="label">Did Not Vote</div>
@@ -251,6 +274,12 @@ function Results({ onNavigate, isPublic = false }) {
             <div className="label">Positions</div>
             <div className="value">{positions.size}</div>
           </div>
+          {rejectedVotes > 0 && (
+            <div className="stat-card rejected">
+              <div className="label">Rejected Votes</div>
+              <div className="value">{rejectedVotes}</div>
+            </div>
+          )}
         </section>
 
         <section className="committee-panel">
@@ -271,26 +300,58 @@ function Results({ onNavigate, isPublic = false }) {
           </div>
         </section>
 
-        {winnersList.length > 0 && (
-          <section className="winners-section">
-            <h3 className="section-title">🏆 Elected Winners</h3>
-            <div className="winners-grid luxury">
-              {winnersList.map((winner, idx) => (
-                <div key={`${winner.position}-${idx}`} className="winner-card-luxe">
+        {/* Position-based Results Display */}
+        {Array.from(positions).map(position => {
+          const positionCandidates = allCandidatesDisplay
+            .filter(c => c.position === position)
+            .sort((a, b) => b.totalVotes - a.totalVotes);
+          
+          if (positionCandidates.length === 0) return null;
+          
+          const winner = positionCandidates[0];
+          const opponents = positionCandidates.slice(1);
+          
+          return (
+            <section key={position} className="position-result-card">
+              <h3 className="position-title">{position}</h3>
+              <div className="position-result-content">
+                {/* Winner */}
+                <div className="candidate-result winner">
                   <div className="winner-crown">👑</div>
-                  <div className="position">{winner.position}</div>
-                  <div className="name">{winner.candidateName}</div>
-                  <div className="metrics">
-                    <span className="votes">🗳️ {winner.totalVotes} votes</span>
-                    <span className="percentage">📊 {winner.votePercentage}%</span>
+                  <div className="candidate-name">{winner.candidateName}</div>
+                  <div className="candidate-stats">
+                    <span className="votes">{winner.totalVotes} votes</span>
+                    <span className="percentage">{winner.votePercentage || 0}%</span>
                   </div>
+                  <div className="result-badge winner-badge">WINNER</div>
                 </div>
-              ))}
-            </div>
-          </section>
-        )}
+                
+                {/* VS separator and opponents */}
+                {opponents.length > 0 && (
+                  <>
+                    <div className="vs-separator">
+                      <span>VS</span>
+                    </div>
+                    
+                    <div className="opponents-container">
+                      {opponents.map((opponent, idx) => (
+                        <div key={`opponent-${position}-${idx}`} className="candidate-result loser">
+                          <div className="candidate-name">{opponent.candidateName}</div>
+                          <div className="candidate-stats">
+                            <span className="votes">{opponent.totalVotes} votes</span>
+                            <span className="percentage">{opponent.votePercentage || 0}%</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            </section>
+          );
+        })}
 
-        {allCandidates.length > 0 && (
+        {allCandidatesDisplay.length > 0 && (
           <section className="luxury-table">
             <h3>📋 Full Candidate Tally</h3>
             <div className="table">
@@ -301,14 +362,14 @@ function Results({ onNavigate, isPublic = false }) {
                 <div>Vote %</div>
                 <div>Status</div>
               </div>
-              {allCandidates.map((entry, index) => {
-                const isWinner = winnersList.some(w => w.candidateName === entry.candidateName && w.position === entry.position);
+              {allCandidatesDisplay.map((entry, index) => {
+                const isWinner = winnersDisplay.some(w => w.candidateName === entry.candidateName && w.position === entry.position);
                 return (
-                  <div key={`${entry.position}-${index}`} className={`row ${isWinner ? 'winner-row' : ''}`}>
+                  <div key={`tally-${entry.position}-${index}`} className={`row ${isWinner ? 'winner-row' : 'loser-row'}`}>
                     <div>{entry.position}</div>
                     <div className="strong">{entry.candidateName}</div>
                     <div>{entry.totalVotes}</div>
-                    <div>{entry.votePercentage}%</div>
+                    <div>{entry.votePercentage || 0}%</div>
                     <div>{isWinner ? '🏆 Winner' : '—'}</div>
                   </div>
                 );

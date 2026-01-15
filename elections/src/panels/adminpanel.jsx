@@ -73,112 +73,250 @@ function AdminPanel({ electionData = { candidates: [] }, setElectionData, onNavi
   }, [electionData?.isOpen])
 
   // Fetch real-time data from backend
+  // useEffect(() => {
+  //   const fetchRealtimeData = async () => {
+  //     try {
+  //       console.log('📊 AdminPanel: Fetching real-time admin data...')
+  //       setError('')
+  //       const scheduleLocked = scheduleDirty || (scheduleEditedAt && (Date.now() - scheduleEditedAt < 4000))
+        
+  //       // Fetch latest election status
+  //       try {
+  //         const statusResp = await adminAPI.getElectionStatus(ELECTION_ID)
+  //         if (statusResp?.election) {
+  //           const { isOpen, startDate, endDate, autoOpenEnabled: autoMode } = statusResp.election
+  //           const sched = statusResp.schedule || {}
+  //           if (isOpen !== undefined) {
+  //             setIsOpenLocal(isOpen)
+  //             localStorage.setItem('electionIsOpen', isOpen.toString())
+  //             setElectionData(prev => ({ ...prev, isOpen }))
+  //           }
+  //           // If user is editing schedule right now, avoid overwriting their inputs with stale poll
+  //           if (scheduleDirty) {
+  //             return
+  //           }
+  //           const startVal = sched.startDate || startDate
+  //           const endVal = sched.endDate || endDate
+  //           if (!scheduleLocked) {
+  //             const nextStart = startVal ? new Date(startVal).toISOString().slice(0, 16) : ''
+  //             const nextEnd = endVal ? new Date(endVal).toISOString().slice(0, 16) : ''
+  //             setScheduleStart(prev => prev === nextStart ? prev : nextStart)
+  //             setScheduleEnd(prev => prev === nextEnd ? prev : nextEnd)
+  //             setAutoOpenEnabled(Boolean(sched.autoOpenEnabled ?? autoMode))
+  //           } else {
+  //             // Keep local edits but still refresh open status display
+  //             if (isOpen !== undefined) {
+  //               setIsOpenLocal(isOpen)
+  //               localStorage.setItem('electionIsOpen', isOpen.toString())
+  //               setElectionData(prev => ({ ...prev, isOpen }))
+  //             }
+  //           }
+  //         }
+  //       } catch (statusErr) {
+  //         console.warn('Could not fetch election status:', statusErr.message)
+  //       }
+
+  //       // Fetch candidates from API to ensure we have latest data
+  //       const candidatesData = await candidateAPI.getCandidates(ELECTION_ID)
+  //       console.log('📋 Candidates fetched:', candidatesData)
+  //       if (candidatesData && candidatesData.length > 0) {
+  //         setElectionData(prev => ({
+  //           ...prev,
+  //           candidates: candidatesData
+  //         }))
+  //       }
+        
+  //       // Fetch attendance report
+  //       const attendanceReport = await attendanceAPI.getAttendanceReport(ELECTION_ID)
+  //       console.log('📋 Attendance Report:', attendanceReport)
+        
+  //       const attendanceMap = {}
+  //       if (attendanceReport.report?.attendanceList) {
+  //         attendanceReport.report.attendanceList.forEach(record => {
+  //           attendanceMap[record.flatNumber] = {
+  //             flatNumber: record.flatNumber,
+  //             name: record.name,
+  //             loginTime: new Date(record.loginTime).toLocaleTimeString(),
+  //             voteTime: record.voteTime ? new Date(record.voteTime).toLocaleTimeString() : null,
+  //             voted: record.voted,
+  //             rejected: Boolean(record.rejected),
+  //             rejectedAt: record.rejectedAt ? new Date(record.rejectedAt).toLocaleTimeString() : null
+  //           }
+  //         })
+  //       }
+  //       setLiveAttendance(attendanceMap)
+        
+  //       // Fetch election results
+  //       const results = await voteAPI.getResults(ELECTION_ID)
+  //       console.log('📊 Election Results:', results)
+  //       setLiveResults(results.results || {})
+
+  //       // Fetch finalized/cancelled stats if available
+  //       try {
+  //         const finalized = await resultsAPI.getFinalizedResults(ELECTION_ID)
+  //         if (finalized?.results?.statistics) {
+  //           setRejectedVotes(finalized.results.statistics.rejectedVotes || 0)
+  //           setResultsStatus(finalized.results.electionStatus || 'declared')
+  //         }
+  //       } catch (finalErr) {
+  //         setResultsStatus('ongoing')
+  //         setRejectedVotes(0)
+  //       }
+        
+  //       setLoading(false)
+  //     } catch (error) {
+  //       console.error('❌ Error fetching real-time data:', error)
+  //       setError(`Error loading data: ${error.message}`)
+  //       setLoading(false)
+  //     }
+  //   }
+
+  //   // Initial fetch
+  //   fetchRealtimeData()
+
+  //   // Set up polling to refresh data every 5 seconds
+  //   const pollInterval = setInterval(fetchRealtimeData, 5000)
+    
+  //   return () => clearInterval(pollInterval)
+  // }, [setElectionData, ELECTION_ID, refreshKey, scheduleEditedAt, scheduleDirty])
   useEffect(() => {
     const fetchRealtimeData = async () => {
       try {
-        console.log('📊 AdminPanel: Fetching real-time admin data...')
-        setError('')
-        const scheduleLocked = scheduleDirty || (scheduleEditedAt && (Date.now() - scheduleEditedAt < 4000))
-        
+        console.log('📊 AdminPanel: Fetching real-time admin data...');
+        setError('');
+
+        const scheduleLocked =
+          scheduleDirty || (scheduleEditedAt && Date.now() - scheduleEditedAt < 4000);
+
+        // Helper: convert ISO/UTC to PKT string "YYYY-MM-DDTHH:mm"
+        const toPKTInputFormat = (isoDateStr) => {
+          if (!isoDateStr) return '';
+          const date = new Date(isoDateStr);
+          // Convert to PKT using Intl API
+          const pktStr = date.toLocaleString('en-CA', {
+            timeZone: 'Asia/Karachi',
+            hour12: false,
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit'
+          });
+          // Replace "/" with "-" for input[type=datetime-local]
+          return pktStr.replace(/\//g, '-').replace(', ', 'T');
+        };
+
         // Fetch latest election status
         try {
-          const statusResp = await adminAPI.getElectionStatus(ELECTION_ID)
+          const statusResp = await adminAPI.getElectionStatus(ELECTION_ID);
           if (statusResp?.election) {
-            const { isOpen, startDate, endDate, autoOpenEnabled: autoMode } = statusResp.election
-            const sched = statusResp.schedule || {}
+            const { isOpen, startDate, endDate, autoOpenEnabled: autoMode } =
+              statusResp.election;
+            const sched = statusResp.schedule || {};
+
             if (isOpen !== undefined) {
-              setIsOpenLocal(isOpen)
-              localStorage.setItem('electionIsOpen', isOpen.toString())
-              setElectionData(prev => ({ ...prev, isOpen }))
+              setIsOpenLocal(isOpen);
+              localStorage.setItem('electionIsOpen', isOpen.toString());
+              setElectionData((prev) => ({ ...prev, isOpen }));
             }
-            // If user is editing schedule right now, avoid overwriting their inputs with stale poll
-            if (scheduleDirty) {
-              return
-            }
-            const startVal = sched.startDate || startDate
-            const endVal = sched.endDate || endDate
-            if (!scheduleLocked) {
-              const nextStart = startVal ? new Date(startVal).toISOString().slice(0, 16) : ''
-              const nextEnd = endVal ? new Date(endVal).toISOString().slice(0, 16) : ''
-              setScheduleStart(prev => prev === nextStart ? prev : nextStart)
-              setScheduleEnd(prev => prev === nextEnd ? prev : nextEnd)
-              setAutoOpenEnabled(Boolean(sched.autoOpenEnabled ?? autoMode))
-            } else {
-              // Keep local edits but still refresh open status display
-              if (isOpen !== undefined) {
-                setIsOpenLocal(isOpen)
-                localStorage.setItem('electionIsOpen', isOpen.toString())
-                setElectionData(prev => ({ ...prev, isOpen }))
-              }
+
+            // Avoid overwriting user edits
+            if (!scheduleDirty) {
+              const startVal = sched.startDate || startDate;
+              const endVal = sched.endDate || endDate;
+
+              const nextStart = toPKTInputFormat(startVal);
+              const nextEnd = toPKTInputFormat(endVal);
+
+              setScheduleStart((prev) => (prev === nextStart ? prev : nextStart));
+              setScheduleEnd((prev) => (prev === nextEnd ? prev : nextEnd));
+              setAutoOpenEnabled(Boolean(sched.autoOpenEnabled ?? autoMode));
             }
           }
         } catch (statusErr) {
-          console.warn('Could not fetch election status:', statusErr.message)
+          console.warn('Could not fetch election status:', statusErr.message);
         }
 
-        // Fetch candidates from API to ensure we have latest data
-        const candidatesData = await candidateAPI.getCandidates(ELECTION_ID)
-        console.log('📋 Candidates fetched:', candidatesData)
+        // Fetch candidates
+        const candidatesData = await candidateAPI.getCandidates(ELECTION_ID);
+        console.log('📋 Candidates fetched:', candidatesData);
         if (candidatesData && candidatesData.length > 0) {
-          setElectionData(prev => ({
-            ...prev,
-            candidates: candidatesData
-          }))
+          setElectionData((prev) => ({ ...prev, candidates: candidatesData }));
         }
-        
+
         // Fetch attendance report
-        const attendanceReport = await attendanceAPI.getAttendanceReport(ELECTION_ID)
-        console.log('📋 Attendance Report:', attendanceReport)
-        
-        const attendanceMap = {}
+        const attendanceReport = await attendanceAPI.getAttendanceReport(ELECTION_ID);
+        console.log('📋 Attendance Report:', attendanceReport);
+
+        const attendanceMap = {};
         if (attendanceReport.report?.attendanceList) {
-          attendanceReport.report.attendanceList.forEach(record => {
+          attendanceReport.report.attendanceList.forEach((record) => {
+            const pktLoginTime = record.loginTime
+              ? new Date(record.loginTime).toLocaleTimeString('en-US', {
+                  timeZone: 'Asia/Karachi',
+                  hour12: false,
+                })
+              : null;
+
+            const pktVoteTime = record.voteTime
+              ? new Date(record.voteTime).toLocaleTimeString('en-US', {
+                  timeZone: 'Asia/Karachi',
+                  hour12: false,
+                })
+              : null;
+
+            const pktRejectedAt = record.rejectedAt
+              ? new Date(record.rejectedAt).toLocaleTimeString('en-US', {
+                  timeZone: 'Asia/Karachi',
+                  hour12: false,
+                })
+              : null;
+
             attendanceMap[record.flatNumber] = {
               flatNumber: record.flatNumber,
               name: record.name,
-              loginTime: new Date(record.loginTime).toLocaleTimeString(),
-              voteTime: record.voteTime ? new Date(record.voteTime).toLocaleTimeString() : null,
+              loginTime: pktLoginTime,
+              voteTime: pktVoteTime,
               voted: record.voted,
               rejected: Boolean(record.rejected),
-              rejectedAt: record.rejectedAt ? new Date(record.rejectedAt).toLocaleTimeString() : null
-            }
-          })
+              rejectedAt: pktRejectedAt,
+            };
+          });
         }
-        setLiveAttendance(attendanceMap)
-        
-        // Fetch election results
-        const results = await voteAPI.getResults(ELECTION_ID)
-        console.log('📊 Election Results:', results)
-        setLiveResults(results.results || {})
+        setLiveAttendance(attendanceMap);
 
-        // Fetch finalized/cancelled stats if available
+        // Fetch election results
+        const results = await voteAPI.getResults(ELECTION_ID);
+        console.log('📊 Election Results:', results);
+        setLiveResults(results.results || {});
+
+        // Fetch finalized/cancelled stats
         try {
-          const finalized = await resultsAPI.getFinalizedResults(ELECTION_ID)
+          const finalized = await resultsAPI.getFinalizedResults(ELECTION_ID);
           if (finalized?.results?.statistics) {
-            setRejectedVotes(finalized.results.statistics.rejectedVotes || 0)
-            setResultsStatus(finalized.results.electionStatus || 'declared')
+            setRejectedVotes(finalized.results.statistics.rejectedVotes || 0);
+            setResultsStatus(finalized.results.electionStatus || 'declared');
           }
         } catch (finalErr) {
-          setResultsStatus('ongoing')
-          setRejectedVotes(0)
+          setResultsStatus('ongoing');
+          setRejectedVotes(0);
         }
-        
-        setLoading(false)
+
+        setLoading(false);
       } catch (error) {
-        console.error('❌ Error fetching real-time data:', error)
-        setError(`Error loading data: ${error.message}`)
-        setLoading(false)
+        console.error('❌ Error fetching real-time data:', error);
+        setError(`Error loading data: ${error.message}`);
+        setLoading(false);
       }
-    }
+    };
 
     // Initial fetch
-    fetchRealtimeData()
+    fetchRealtimeData();
 
-    // Set up polling to refresh data every 5 seconds
-    const pollInterval = setInterval(fetchRealtimeData, 5000)
-    
-    return () => clearInterval(pollInterval)
-  }, [setElectionData, ELECTION_ID, refreshKey, scheduleEditedAt, scheduleDirty])
+    // Poll every 5 seconds
+    const pollInterval = setInterval(fetchRealtimeData, 5000);
+    return () => clearInterval(pollInterval);
+  }, [setElectionData, ELECTION_ID, refreshKey, scheduleEditedAt, scheduleDirty]);
 
   const handleAddCandidate = async () => {
     if (!newCandidate.name?.trim() || !newCandidate.position?.trim()) {
