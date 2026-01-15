@@ -44,13 +44,13 @@
 - **Total**: 105 voters
 - **Wing A**: Flats A-1 to A-45 (45 voters)
 - **Wing B**: Flats B-1 to B-60 (60 voters)
-- **Default Password**: password@123 (all voters)
+- **Default Password**: xxxxxxxxxxxxx (all voters)
 - **Email**: resident{number}@allahnnoor.com
 - **Phone**: Auto-generated unique number
 
 ### Admin
 - **Username**: admin
-- **Password**: admin@12345
+- **Password**: xxxxxxxxx
 - **Email**: admin@allahnnoor.com
 - **Role**: Full permissions
 
@@ -58,7 +58,7 @@
 - **Name**: 2026 Annual Elections - Allah Noor
 - **Positions**: President, Vice President, Secretary, Treasurer
 - **Candidates**: 8 total (2 per position)
-- **Committee**: 6 members
+- **Committee**: 3 members
 
 ### Security
 - ✓ Password hashing (bcryptjs)
@@ -101,7 +101,7 @@ npm run dev
 ### Voter Login
 ```
 Flat Number: A-1 (or any A-1 to B-60)
-Password: password@123
+Password: xxxxxxxxxxxx
 ✓ Vote Casting Page
 ✓ My Profile
 ```
@@ -109,7 +109,7 @@ Password: password@123
 ### Admin Login
 ```
 Username: admin
-Password: admin@12345
+Password: xxxxxxxxxxxxxx
 ✓ Dashboard
 ✓ Results
 ✓ Manage Voters
@@ -196,7 +196,7 @@ Elections/
 4. **candidates** (8 docs) - Candidates per position
 5. **votes** - Cast votes (empty initially)
 6. **attendance** - Login records (empty initially)
-7. **electioncommiteemembers** (6 docs) - Committee
+7. **electioncommiteemembers** (3 docs) - Committee
 
 ---
 
@@ -265,7 +265,7 @@ Elections/
 ## 🧪 TESTING CHECKLIST
 
 ### Admin Testing
-- [ ] Login with admin/admin@12345
+- [ ] Login with admin/xxxxxxxxxxx
 - [ ] View all voters
 - [ ] View candidates
 - [ ] View attendance report
@@ -273,7 +273,7 @@ Elections/
 - [ ] Access dashboard
 
 ### Voter Testing
-- [ ] Login with A-1/password@123
+- [ ] Login with A-1/xxxxxxxxxxx
 - [ ] View candidates
 - [ ] Cast vote for all positions
 - [ ] Cannot vote again
